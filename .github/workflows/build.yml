@@ -65,9 +65,15 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+      - name: 產生 SHA256 校驗碼
+        run: |
+          cd artifacts
+          sha256sum *.zip *.tar.gz > SHA256SUMS.txt
+          cat SHA256SUMS.txt
       - uses: softprops/action-gh-release@v2
         with:
           files: |
             artifacts/*.zip
             artifacts/*.tar.gz
+            artifacts/SHA256SUMS.txt
           generate_release_notes: true

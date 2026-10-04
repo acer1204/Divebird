@@ -45,7 +45,10 @@ async function refreshStatus() {
 }
 
 async function init() {
-  [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  // ?tab=<分頁 ID>：在一般分頁中開啟彈出視窗時，指定要顯示哪個分頁的內容（除錯與截圖用）
+  const forced = Number(new URLSearchParams(location.search).get("tab"));
+  tab = forced ? await chrome.tabs.get(forced).catch(() => null) : null;
+  if (!tab) [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const s = await chrome.storage.local.get({ port: 17890, floatingButton: true, interceptDownloads: true });
   $("port").value = s.port;
   $("floatingButton").checked = s.floatingButton;
