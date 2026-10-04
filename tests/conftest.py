@@ -17,6 +17,8 @@ class FileServer:
         self.throttle = 0.0               # 每 64KB 的延遲秒數
         self.slow_ranges_from: int | None = None   # 從此位移開始的 Range 請求額外變慢
         self.content_disposition: str | None = None
+        self.max_conns: int | None = None    # 模擬限制同時連線數的伺服器：超過就回 503
+        self.active = 0
         self.requests: list[tuple[str, str | None]] = []
         self.lock = threading.Lock()
         fs = self
@@ -32,6 +34,20 @@ class FileServer:
                 rng = self.headers.get("Range")
                 with fs.lock:
                     fs.requests.append((name, rng))
+                    fs.active += 1
+                    over = fs.max_conns is not None and fs.active > fs.max_conns
+                try:
+                    if over:
+                        self.send_response(503)
+                        self.send_header("Content-Length", "0")
+                        self.end_headers()
+                        return
+                    self._serve(name, rng)
+                finally:
+                    with fs.lock:
+                        fs.active -= 1
+
+            def _serve(self, name, rng):
                 data = fs.files.get(name)
                 if data is None:
                     self.send_response(404)

@@ -1,6 +1,7 @@
-"""開機 / 登入時自動啟動（縮小到系統匣），讓瀏覽器擴充功能隨時能交付下載。
+r"""開機 / 登入時自動啟動（縮小到系統匣），讓瀏覽器擴充功能隨時能交付下載。
 
-- Windows：HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run
+- Windows：HKCU\Software\Microsoft\Windows\CurrentVersion\Run
+  （使用者在「工作管理員 → 啟動應用程式」停用時，Windows 另外記在 StartupApproved\Run）
 - Linux：~/.config/autostart/divebird.desktop（XDG Autostart）
 """
 from __future__ import annotations
@@ -11,9 +12,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .config import APP_NAME
+from .config import APP_NAME, LEGACY_NAMES
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+APPROVED_KEY = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
 
 
 def launch_command() -> list[str]:
@@ -31,34 +33,77 @@ def launch_command() -> list[str]:
     return [str(exe), "-m", "divebird", "--minimized"]
 
 
-def _desktop_file() -> Path:
-    return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "autostart" / "divebird.desktop"
+# ---------------------------------------------------------------- Windows
+def _win_run_exists(name: str) -> bool:
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
+            winreg.QueryValueEx(k, name)
+            return True
+    except OSError:
+        return False
 
 
+def _win_disabled_by_user(name: str) -> bool:
+    """工作管理員中被停用的項目：StartupApproved 值的第一個位元組為奇數。"""
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, APPROVED_KEY) as k:
+            data, _ = winreg.QueryValueEx(k, name)
+            return bool(data) and data[0] % 2 == 1
+    except OSError:
+        return False
+
+
+def _win_delete(key: str, name: str) -> None:
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, 0, winreg.KEY_SET_VALUE) as k:
+            winreg.DeleteValue(k, name)
+    except OSError:
+        pass
+
+
+# ---------------------------------------------------------------- Linux
+def _desktop_file(name: str = APP_NAME) -> Path:
+    base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    return base / "autostart" / f"{name.lower()}.desktop"
+
+
+def desktop_disabled(text: str) -> bool:
+    """XDG autostart 項目被停用：Hidden=true 或 X-GNOME-Autostart-enabled=false。"""
+    for line in text.splitlines():
+        key, _, value = line.partition("=")
+        key, value = key.strip().lower(), value.strip().lower()
+        if (key == "hidden" and value == "true") or (key == "x-gnome-autostart-enabled" and value == "false"):
+            return True
+    return False
+
+
+def _desktop_enabled(path: Path) -> bool:
+    try:
+        return not desktop_disabled(path.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return False
+
+
+# ---------------------------------------------------------------- 公開介面
 def is_enabled() -> bool:
     if sys.platform == "win32":
-        import winreg
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
-                winreg.QueryValueEx(k, APP_NAME)
-                return True
-        except OSError:
-            return False
-    return _desktop_file().exists()
+        return _win_run_exists(APP_NAME) and not _win_disabled_by_user(APP_NAME)
+    return _desktop_enabled(_desktop_file())
 
 
 def set_enabled(enabled: bool) -> None:
     cmd = launch_command()
     if sys.platform == "win32":
         import winreg
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
-            if enabled:
+        if enabled:
+            with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
                 winreg.SetValueEx(k, APP_NAME, 0, winreg.REG_SZ, subprocess.list2cmdline(cmd))
-            else:
-                try:
-                    winreg.DeleteValue(k, APP_NAME)
-                except FileNotFoundError:
-                    pass
+            _win_delete(APPROVED_KEY, APP_NAME)     # 使用者在設定中重新勾選：清除「已停用」標記
+        else:
+            _win_delete(RUN_KEY, APP_NAME)
         return
     f = _desktop_file()
     if enabled:
@@ -73,29 +118,20 @@ def set_enabled(enabled: bool) -> None:
 
 
 def migrate_legacy() -> None:
-    """改名前（OpenDM）設定過的自動啟動：移除舊項目並以新名稱重新建立。"""
-    from .config import LEGACY_NAMES
-
-    had_legacy = False
+    """改名前（OpenDM）設定的自動啟動：移除舊項目；只有舊項目原本是「啟用中」才以新名稱重新建立，
+    不會打開使用者已經在系統中停用的自動啟動。"""
+    was_active = False
     if sys.platform == "win32":
-        import winreg
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0,
-                                winreg.KEY_QUERY_VALUE | winreg.KEY_SET_VALUE) as k:
-                for name in LEGACY_NAMES:
-                    try:
-                        winreg.QueryValueEx(k, name)
-                    except FileNotFoundError:
-                        continue
-                    winreg.DeleteValue(k, name)
-                    had_legacy = True
-        except OSError:
-            return
+        for name in LEGACY_NAMES:
+            if _win_run_exists(name):
+                was_active = was_active or not _win_disabled_by_user(name)
+                _win_delete(RUN_KEY, name)
+                _win_delete(APPROVED_KEY, name)
     else:
         for name in LEGACY_NAMES:
-            old = _desktop_file().with_name(f"{name.lower()}.desktop")
+            old = _desktop_file(name)
             if old.exists():
+                was_active = was_active or _desktop_enabled(old)
                 old.unlink()
-                had_legacy = True
-    if had_legacy and not is_enabled():
+    if was_active and not is_enabled():
         set_enabled(True)

@@ -130,6 +130,14 @@ def _is_permanent(e: Exception) -> bool:
             and 400 <= resp.status_code < 500 and resp.status_code not in (408, 429))
 
 
+def _close_all(responses) -> None:
+    for r in responses:
+        try:
+            r.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 _CONTENT_RANGE = re.compile(r"bytes\s+(\d+)-(\d+)/(\d+|\*)", re.I)
 
 
@@ -165,8 +173,11 @@ def probe(session: requests.Session, url: str) -> ProbeResult:
 class HttpDownloader:
     def __init__(self, task: Task, *, connections: int = 8, max_retries: int = 8,
                  limiter: RateLimiter | None = None,
-                 on_update: Callable[[Task], None] | None = None):
+                 on_update: Callable[[Task], None] | None = None,
+                 name_reserver: Callable[[Path], Path] | None = None):
         self.task = task
+        # 決定最終檔名：預設只檢查磁碟；DownloadManager 會傳入也避開其他任務已佔用名稱的版本
+        self.reserve_name = name_reserver or unique_path
         self.connections = max(1, connections)
         self.max_retries = max_retries
         self.limiter = limiter or RateLimiter()
@@ -179,6 +190,7 @@ class HttpDownloader:
         self._fatal: Exception | None = None
         self._etag = ""
         self._active = 0
+        self._conn_limit = self.connections   # 伺服器限制連線數時會自動下修
         self._file = None
         self.segments: list[Segment] = []
         self._samples: deque[tuple[float, int]] = deque(maxlen=12)
@@ -188,11 +200,10 @@ class HttpDownloader:
         self._stop.set()
         self._wake.set()
         with self._lock:
-            for r in list(self._responses):
-                try:
-                    r.close()
-                except Exception:
-                    pass
+            responses = list(self._responses)
+        if responses:
+            # 連線卡住時 close() 會等到讀取逾時（約 30 秒）才返回：交給背景執行緒，避免卡住 GUI
+            threading.Thread(target=_close_all, args=(responses,), daemon=True).start()
 
     @property
     def stopped(self) -> bool:
@@ -209,12 +220,12 @@ class HttpDownloader:
                 return False
             Path(task.save_dir).mkdir(parents=True, exist_ok=True)
             if not task.filename:
-                task.filename = unique_path(Path(task.save_dir) / info.filename).name
+                task.filename = self.reserve_name(Path(task.save_dir) / info.filename).name
             final = task.filepath
             part = final.with_name(final.name + ".part")
             state_file = final.with_name(final.name + ".part.json")
             if final.exists() and not part.exists():
-                final = unique_path(final)
+                final = self.reserve_name(final)
                 task.filename = final.name
                 part = final.with_name(final.name + ".part")
                 state_file = final.with_name(final.name + ".part.json")
@@ -238,7 +249,7 @@ class HttpDownloader:
                 return False
 
             if final.exists():
-                final = unique_path(final, extra_suffixes=())
+                final = self.reserve_name(final)
                 task.filename = final.name
             self._replace_with_retry(part, final)
             state_file.unlink(missing_ok=True)
@@ -266,6 +277,7 @@ class HttpDownloader:
         except (OSError, ValueError):
             pass
         if (state and part.exists() and state.get("total") == total and part.stat().st_size == total
+                and state.get("url", self.task.url) == self.task.url
                 and (not info.etag or not state.get("etag") or state["etag"] == info.etag)):
             self.segments = [Segment(s, e, p) for s, e, p in state["segments"]]
             self._etag = state.get("etag", "")
@@ -323,7 +335,7 @@ class HttpDownloader:
     def _spawn_workers(self, session, url) -> None:
         while not self.stopped:
             with self._lock:
-                if self._active >= self.connections:
+                if self._active >= self._conn_limit:
                     return
             seg = self._next_segment()
             if seg is None:
@@ -338,6 +350,7 @@ class HttpDownloader:
         try:
             self._spawn_workers(session, url)
             last_save = time.monotonic()
+            last_progress = self._downloaded()
             while True:
                 self._wake.wait(REPORT_INTERVAL)
                 self._wake.clear()
@@ -346,14 +359,22 @@ class HttpDownloader:
                 with self._lock:
                     all_done = all(s.done for s in self.segments)
                     active = self._active
-                    errors = list(self._errors)
                 if all_done:
                     break
                 if self._fatal is not None:
                     raise self._fatal
-                if len(errors) >= max(3, self.connections):
+                downloaded = self._downloaded()
+                with self._lock:
+                    if downloaded > last_progress and self._errors:
+                        # 有連線放棄、但其餘連線仍有進度：多半是伺服器限制同時連線數（如 503/429），
+                        # 下修連線數上限並重新計算錯誤，避免把仍在進行的下載誤判為失敗
+                        self._conn_limit = max(1, min(self._conn_limit, active))
+                        self._errors.clear()
+                    errors = list(self._errors)
+                last_progress = max(last_progress, downloaded)
+                if len(errors) >= max(3, self._conn_limit):
                     raise errors[-1]
-                if active < self.connections:
+                if active < self._conn_limit:
                     self._spawn_workers(session, url)
                     with self._lock:
                         active = self._active
@@ -403,6 +424,8 @@ class HttpDownloader:
                                            timeout=(CONNECT_TIMEOUT, READ_TIMEOUT))
                         with self._lock:
                             self._responses.add(resp)
+                        if self.stopped:
+                            break
                         if resp.status_code != 206:
                             resp.raise_for_status()
                             raise DownloadError(f"伺服器未回應分段內容（HTTP {resp.status_code}）")

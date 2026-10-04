@@ -1,6 +1,7 @@
 """擴充功能端對端測試（需 Playwright 與 Chromium，手動執行，不在 pytest 預設範圍內）。
 
-    uv run --no-project --with playwright python tests/e2e/run_extension_e2e.py [--chromium PATH]
+    .runtime/uv/uv run --no-project --with playwright python -m playwright install chromium   # 第一次
+    .runtime/uv/uv run --no-project --with playwright python tests/e2e/run_extension_e2e.py [--chromium PATH]
 
 流程：
 1. 產生測試影片（mp4 + HLS），用支援 Range 的本機伺服器提供測試網頁

@@ -168,17 +168,21 @@ async function recordMedia(tabId, item) {
 }
 
 // 換頁（包含 YouTube 這類單頁應用切換影片）時清除舊的偵測結果
-chrome.tabs.onUpdated.addListener((tabId, info) => {
+chrome.tabs.onUpdated.addListener(async (tabId, info) => {
   if (!info.url) return;
   const strip = (u) => u.split("#")[0];
-  const prev = tabUrls.get(tabId);
+  const key = `url_${tabId}`;
+  let prev = tabUrls.get(tabId);
+  // service worker 被回收後記憶體中的網址會消失：從 session storage 取回，才判斷得出是否換頁
+  if (prev === undefined) prev = (await chrome.storage.session.get(key))[key];
   tabUrls.set(tabId, info.url);
+  chrome.storage.session.set({ [key]: info.url });
   if (prev !== undefined && strip(prev) !== strip(info.url)) clearTab(tabId);
 });
 chrome.tabs.onRemoved.addListener((tabId) => {
   tabMedia.delete(tabId);
   tabUrls.delete(tabId);
-  chrome.storage.session.remove(`media_${tabId}`);
+  chrome.storage.session.remove([`media_${tabId}`, `url_${tabId}`]);
 });
 
 // ------------------------------------------------------------------ 與桌面程式通訊

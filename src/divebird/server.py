@@ -9,6 +9,8 @@
 from __future__ import annotations
 
 import json
+import socket
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable
@@ -19,6 +21,18 @@ from .config import APP_NAME
 
 ALLOWED_ORIGIN_SCHEMES = ("chrome-extension://", "moz-extension://", "extension://")
 MAX_BODY = 4 * 1024 * 1024
+
+
+class _ApiHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+    # Windows 的 SO_REUSEADDR 會讓第二個程式也能綁上已被佔用的埠（請求仍全部送到第一個），
+    # 造成「瀏覽器整合已啟用」的假象；改用獨佔綁定，埠被佔用時才會正確失敗
+    allow_reuse_address = sys.platform != "win32"
+
+    def server_bind(self):
+        if sys.platform == "win32" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
 
 
 class ApiServer:
@@ -35,7 +49,7 @@ class ApiServer:
             api = server
 
         try:
-            self._httpd = ThreadingHTTPServer(("127.0.0.1", self.port), Handler)
+            self._httpd = _ApiHTTPServer(("127.0.0.1", self.port), Handler)
         except OSError:
             return False
         self._httpd.daemon_threads = True

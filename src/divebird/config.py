@@ -34,35 +34,60 @@ def bundle_dir() -> Path:
 LEGACY_NAMES = ("OpenDM",)   # 改名前的程式名稱：首次啟動時自動搬移舊資料
 
 
+def _user_data_locations() -> tuple[Path, list[Path]]:
+    """（非可攜模式）新資料夾路徑，以及改名前舊名稱的資料夾路徑。"""
+    if sys.platform == "win32":
+        parent = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
+        return parent / APP_NAME, [parent / n for n in LEGACY_NAMES]
+    parent = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    return parent / APP_NAME.lower(), [parent / n.lower() for n in LEGACY_NAMES]
+
+
+def legacy_ports() -> set[int]:
+    """舊版可能使用的 API 埠（預設埠 + 舊設定檔中的埠），用來偵測舊版是否仍在執行。"""
+    ports = {DEFAULT_PORT}
+    for d in _user_data_locations()[1]:
+        try:
+            ports.add(int(json.loads((d / "settings.json").read_text(encoding="utf-8"))["port"]))
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+    return ports
+
+
 def data_dir() -> Path:
     base = app_dir()
     if (base / "portable").exists():
         path = base / "data"
     else:
-        if sys.platform == "win32":
-            parent = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
-            path = parent / APP_NAME
-            legacy = [parent / n for n in LEGACY_NAMES]
-        else:
-            parent = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-            path = parent / APP_NAME.lower()
-            legacy = [parent / n.lower() for n in LEGACY_NAMES]
+        path, legacy = _user_data_locations()
         _migrate_legacy(path, legacy)
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
 def _migrate_legacy(path: Path, legacy: list[Path]) -> None:
-    """新資料夾還不存在時，複製舊名稱的資料夾（設定、下載清單）。舊資料夾保留不刪，當作備份。"""
+    """新資料夾還不存在時，複製舊名稱的資料夾（設定、下載清單）。舊資料夾保留不刪，當作備份。
+
+    先複製到暫存資料夾、全部成功才改名為正式資料夾：中途失敗（檔案被鎖住、程式被中斷）時
+    不會留下只複製一半的新資料夾，下次啟動會再試一次。"""
     if path.exists():
-        return
-    for old in legacy:
-        if old.is_dir():
-            try:
-                shutil.copytree(old, path)
-            except OSError:
-                pass
+        try:
+            if any(path.iterdir()):
+                return
+            path.rmdir()    # 空資料夾（例如上次搬移失敗後建立的）：視為尚未搬移
+        except OSError:
             return
+    for old in legacy:
+        if not old.is_dir():
+            continue
+        tmp = path.with_name(path.name + ".migrating")
+        try:
+            shutil.rmtree(tmp, ignore_errors=True)
+            shutil.copytree(old, tmp)
+            os.replace(tmp, path)
+        except OSError:
+            shutil.rmtree(tmp, ignore_errors=True)
+        return
 
 
 def default_download_dir() -> Path:

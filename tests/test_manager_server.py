@@ -131,3 +131,94 @@ def test_api_server_security():
         assert ApiServer(port, got.append, lambda: None).start() is False
     finally:
         blocker.close()
+
+
+def test_concurrent_tasks_with_same_name_get_distinct_files(server, tmp_path):
+    """兩個同名下載同時進行時，各自要有自己的檔名與暫存檔，不可互相覆蓋。"""
+    a = server.add("/a/file.bin", 3 * 1024 * 1024)
+    b = server.add("/b/file.bin", 3 * 1024 * 1024)
+    server.throttle = 0.005
+    settings = Settings(download_dir=str(tmp_path), connections=4, max_concurrent=2)
+    mgr = DownloadManager(settings, Recorder(), store=tmp_path / "tasks.json")
+    t1 = mgr.add(Task(url=server.url("/a/file.bin")))
+    t2 = mgr.add(Task(url=server.url("/b/file.bin")))
+    assert wait_for(lambda: t1.status == Status.COMPLETED and t2.status == Status.COMPLETED, 30)
+    assert t1.filename != t2.filename
+    got = {(tmp_path / t.filename).read_bytes() for t in (t1, t2)}
+    assert got == {a, b}
+    mgr.shutdown()
+
+
+def test_finished_download_counts_as_completed_even_if_paused_at_last_moment(monkeypatch, tmp_path):
+    """暫停剛好在檔案改名完成後才送達：run() 已回傳 True，任務必須算完成，不可重新下載出 (1) 副本。"""
+    import divebird.engine.manager as m
+
+    class FinishedThenPaused:
+        def __init__(self, task, **kw):
+            self.task, self.stopped = task, False
+
+        def run(self):
+            self.stopped = True          # 暫停在最後一刻送達
+            return True
+
+        def stop(self):
+            self.stopped = True
+
+    monkeypatch.setattr(m, "HttpDownloader", FinishedThenPaused)
+    mgr = DownloadManager(Settings(download_dir=str(tmp_path)), Recorder(), store=tmp_path / "tasks.json")
+    t = mgr.add(Task(url="http://127.0.0.1:1/x.bin", filename="x.bin"))
+    assert wait_for(lambda: t.status == Status.COMPLETED, 5)
+    mgr.shutdown()
+
+
+def test_redownload_refused_while_merging(tmp_path):
+    mgr = DownloadManager(Settings(download_dir=str(tmp_path)), Recorder(), store=tmp_path / "tasks.json")
+    t = Task(url="https://example.com/v.m3u8", status=Status.PROCESSING)
+    mgr.tasks[t.id] = t
+    assert mgr.redownload(t.id) is False
+    assert t.status == Status.PROCESSING
+    mgr.shutdown()
+
+
+def test_second_server_cannot_share_port():
+    """Windows 上不可讓第二個程式綁上已被佔用的埠（否則會出現「已啟用」的假象）。"""
+    port = _free_port()
+    first = ApiServer(port, on_download=lambda d: None, on_show=lambda: None)
+    assert first.start()
+    try:
+        second = ApiServer(port, on_download=lambda d: None, on_show=lambda: None)
+        assert second.start() is False
+    finally:
+        first.stop()
+
+
+def test_running_legacy_app_is_detected(monkeypatch, tmp_path):
+    """舊版 OpenDM 仍在執行時要偵測得到（才能在搬移資料前請使用者先結束它）。"""
+    import json as _json
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from divebird.gui import app as gui_app
+
+    class Legacy(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            body = _json.dumps({"ok": True, "app": "OpenDM"}).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), Legacy)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    legacy_dir = tmp_path / ("OpenDM" if os.name == "nt" else "opendm")
+    legacy_dir.mkdir()
+    (legacy_dir / "settings.json").write_text(_json.dumps({"port": httpd.server_address[1]}), encoding="utf-8")
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    try:
+        assert gui_app._running_legacy_app() == "OpenDM"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()

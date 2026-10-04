@@ -1,6 +1,7 @@
 """改名（OpenDM → Divebird）後，舊資料要能自動搬到新資料夾。"""
 import json
 import sys
+from pathlib import Path
 
 from divebird import config
 
@@ -41,6 +42,31 @@ def test_existing_new_data_is_not_overwritten(monkeypatch, tmp_path):
     (tmp_path / new_name / "settings.json").write_text(json.dumps({"port": 19000}), encoding="utf-8")
     config.data_dir()
     assert config.Settings.load().port == 19000
+
+
+def test_failed_copy_is_retried(monkeypatch, tmp_path):
+    """複製失敗時不可留下半套新資料夾，下次啟動要能重試。"""
+    _base_env(monkeypatch, tmp_path)
+    old_name, new_name = _names()
+    old = tmp_path / old_name
+    old.mkdir()
+    (old / "tasks.json").write_text("[]", encoding="utf-8")
+    real_copytree = config.shutil.copytree
+    calls = {"n": 0}
+
+    def flaky_copytree(src, dst, *a, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            (Path(dst)).mkdir()
+            raise OSError("檔案被鎖住")
+        return real_copytree(src, dst, *a, **kw)
+
+    monkeypatch.setattr(config.shutil, "copytree", flaky_copytree)
+    first = config.data_dir()        # 搬移失敗：data_dir() 仍會建立一個空的新資料夾
+    assert not (first / "tasks.json").exists()
+    second = config.data_dir()       # 下次啟動
+    assert (second / "tasks.json").exists(), "第二次啟動應重新搬移"
+    assert not second.with_name(second.name + ".migrating").exists()
 
 
 def test_fresh_install_without_legacy(monkeypatch, tmp_path):

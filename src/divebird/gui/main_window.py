@@ -301,6 +301,11 @@ class MainWindow(QMainWindow):
         elif t.status in (Status.PAUSED, Status.ERROR):
             self.ctl.manager.start(t.id)
 
+    def redownload_selected(self, tasks: list[Task]):
+        skipped = [t for t in tasks if not self.ctl.manager.redownload(t.id)]
+        if skipped:
+            self.statusBar().showMessage("合併影音中的項目無法重新下載，請等合併完成後再試", 6000)
+
     def _context_menu(self, pos):
         sel = self.selected_tasks()
         if not sel:
@@ -315,7 +320,7 @@ class MainWindow(QMainWindow):
             m.addAction(self._ico("play"), "繼續", self.resume_selected)
         if any(x.status in (Status.DOWNLOADING, Status.QUEUED) for x in sel):
             m.addAction(self._ico("pause"), "暫停", self.pause_selected)
-        m.addAction(self._ico("refresh"), "重新下載", lambda: [self.ctl.manager.redownload(x.id) for x in sel])
+        m.addAction(self._ico("refresh"), "重新下載", lambda: self.redownload_selected(sel))
         m.addSeparator()
         m.addAction(self._ico("copy"), "複製網址",
                     lambda: QGuiApplication.clipboard().setText("\n".join(x.url for x in sel)))

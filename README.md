@@ -34,7 +34,8 @@ Divebird **不需要使用者安裝 Python、ffmpeg 或其他任何東西**：
 先取得原始碼（或到 Releases 下載打包好的免安裝版）：
 
 ```bash
-git clone https://github.com/<你的帳號>/divebird.git
+git clone https://github.com/acer1204/Divebird.git
+cd Divebird
 ```
 
 ### Windows
@@ -119,7 +120,11 @@ Chrome 擴充功能 (extension/)                 Divebird 桌面程式 (src/dive
 若更改了 API 埠號，記得在擴充功能彈出視窗中改成相同的埠號。
 
 從舊名稱 OpenDM 升級：第一次啟動 Divebird 時，會自動把 `%APPDATA%\OpenDM`（Linux 為 `~/.config/opendm`）的設定與下載清單複製過來，
-舊資料夾保留不動，確認無誤後可自行刪除；舊的開機自動啟動設定也會換成新名稱。
+舊資料夾保留不動，確認無誤後可自行刪除；舊的開機自動啟動設定也會換成新名稱（若你曾在系統中停用它，則維持停用）。
+
+- 升級前請先結束舊版 OpenDM（系統匣圖示按右鍵 → 結束）；舊版仍在執行時，Divebird 會提示你先關閉它。
+- 到 `chrome://extensions` 移除舊的 OpenDM 擴充功能，再重新「載入未封裝項目」選擇新的 `extension` 資料夾
+  （若是同一個資料夾，按「重新載入」即可），否則舊擴充功能會一直顯示「未連線」。
 
 ## 開發與測試
 
@@ -130,16 +135,22 @@ Chrome 擴充功能 (extension/)                 Divebird 桌面程式 (src/dive
 單元 / 整合測試（`tests/`）涵蓋：多連線分段下載、動態分段、暫停續傳、不支援 Range 的伺服器、
 Content-Disposition 中文檔名、佇列與持久化、本機 API 的安全檢查、以 ffmpeg 產生的 HLS 串流下載與合併。
 
-擴充功能端對端測試（以 Playwright 啟動載入擴充功能的 Chromium，實際點擊懸浮按鈕）：
+擴充功能端對端測試（以 Playwright 啟動載入擴充功能的 Chromium，實際點擊懸浮按鈕）。
+使用 `scripts/setup.*` 放在專案內的 uv（Windows 為 `.runtime\uv\uv.exe`）：
 
 ```bash
-uv run --no-project --with playwright python tests/e2e/run_extension_e2e.py
+.runtime/uv/uv run --no-project --with playwright python -m playwright install chromium   # 第一次
+.runtime/uv/uv run --no-project --with playwright python tests/e2e/run_extension_e2e.py
 ```
 
 打包版煙霧測試（啟動打包好的程式，透過 API 實際下載一般檔案與 HLS 串流）：
 
 ```bash
-.venv/bin/python tests/smoke_package.py dist/Divebird/Divebird      # Windows：dist\Divebird\Divebird.exe
+.venv/bin/python tests/smoke_package.py dist/Divebird/Divebird
+```
+
+```powershell
+.venv\Scripts\python.exe tests\smoke_package.py dist\Divebird\Divebird.exe
 ```
 
 `.github/workflows/build.yml` 會在 GitHub Actions 上同時建置 Windows 與 Linux 版本。

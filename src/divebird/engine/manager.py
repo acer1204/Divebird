@@ -12,7 +12,7 @@ import requests
 
 from ..config import Settings, data_dir
 from ..models import Kind, Status, Task
-from ..utils import sanitize_filename, unique_path
+from ..utils import sanitize_filename
 from .http_engine import DownloadError, HttpDownloader, RateLimiter
 from .media_engine import MediaDownloader
 
@@ -59,6 +59,7 @@ class DownloadManager:
         self._store = store or data_dir() / "tasks.json"
         self._dirty = threading.Event()
         self._closing = threading.Event()
+        self._save_lock = threading.Lock()
         self._load()
         threading.Thread(target=self._autosave_loop, daemon=True, name="autosave").start()
 
@@ -78,11 +79,12 @@ class DownloadManager:
             self.tasks[t.id] = t
 
     def save(self) -> None:
-        with self._lock:
-            data = [t.to_dict() for t in self.tasks.values()]
-        tmp = self._store.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-        os.replace(tmp, self._store)
+        with self._save_lock:
+            with self._lock:
+                data = [t.to_dict() for t in self.tasks.values()]
+            tmp = self._store.with_suffix(".tmp")
+            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+            os.replace(tmp, self._store)
 
     def _autosave_loop(self) -> None:
         while not self._closing.is_set():
@@ -99,6 +101,28 @@ class DownloadManager:
             self._dirty.set()
         self.listener.task_changed(task)
 
+    # ---------------------------------------------------------------- 檔名分配
+    def _reserve(self, task: Task, path: Path) -> Path:
+        """回傳不會和磁碟上的檔案、也不會和其他未完成任務撞名的路徑，並立即登記給 task。"""
+        folder = os.path.normcase(os.path.abspath(path.parent))
+        with self._lock:
+            taken = {
+                t.filename.lower() for t in self.tasks.values()
+                if t is not task and t.filename and t.status != Status.COMPLETED
+                and os.path.normcase(os.path.abspath(t.save_dir)) == folder
+            }
+
+            def busy(c: Path) -> bool:
+                return (c.name.lower() in taken or c.exists()
+                        or c.with_name(c.name + ".part").exists())
+
+            candidate, i = path, 1
+            while busy(candidate):
+                candidate = path.with_name(f"{path.stem} ({i}){path.suffix}")
+                i += 1
+            task.filename = candidate.name
+            return candidate
+
     # ---------------------------------------------------------------- 操作
     def apply_settings(self) -> None:
         self.limiter.set_rate(self.settings.speed_limit_kbps * 1024)
@@ -108,8 +132,8 @@ class DownloadManager:
         task.save_dir = task.save_dir or self.settings.download_dir
         if task.filename:
             task.filename = sanitize_filename(task.filename)
-            # 已有同名檔案（或未完成的暫存檔）時自動改名，避免覆蓋或被 yt-dlp 誤判為已下載
-            task.filename = unique_path(Path(task.save_dir) / task.filename).name
+            # 已有同名檔案、暫存檔或其他任務在用同一個名字時自動改名，避免互相覆蓋或被 yt-dlp 誤判為已下載
+            self._reserve(task, Path(task.save_dir) / task.filename)
         task.status = Status.QUEUED if start else Status.PAUSED
         with self._lock:
             self.tasks[task.id] = task
@@ -152,19 +176,28 @@ class DownloadManager:
         for tid in list(self.tasks):
             self.pause(tid)
 
-    def redownload(self, task_id: str) -> None:
+    def redownload(self, task_id: str) -> bool:
+        """重新下載。合併影音中的任務不可重新下載（回傳 False）。等待與清理在背景進行，不卡住 GUI。"""
         t = self.tasks.get(task_id)
-        if not t:
-            return
+        if not t or t.status == Status.PROCESSING:
+            return False
+        was_completed = t.status == Status.COMPLETED
         self.pause(task_id)
-        self._wait_runner(task_id)
-        self._delete_temp_files(t)
-        if t.status == Status.COMPLETED and t.kind == Kind.HTTP:
-            t.filename = unique_path(t.filepath).name
-        t.downloaded, t.total, t.error, t.finished_at = 0, 0, "", 0.0
-        t.status = Status.QUEUED
-        self._changed(t, persist=True)
-        self.schedule()
+
+        def work():
+            self._wait_runner(task_id, timeout=120)
+            if task_id in self._runners or task_id not in self.tasks:
+                return
+            self._delete_temp_files(t)
+            if was_completed and t.filename:
+                self._reserve(t, t.filepath)    # 原檔還在：改用新檔名，不覆蓋
+            t.downloaded, t.total, t.error, t.finished_at = 0, 0, "", 0.0
+            t.status = Status.QUEUED
+            self._changed(t, persist=True)
+            self.schedule()
+
+        threading.Thread(target=work, daemon=True).start()
+        return True
 
     def remove(self, task_id: str, delete_files: bool = False) -> None:
         t = self.tasks.get(task_id)
@@ -177,7 +210,7 @@ class DownloadManager:
         self._dirty.set()
 
         def cleanup():
-            self._wait_runner(task_id)
+            self._wait_runner(task_id, timeout=600)
             if delete_files:
                 self._delete_temp_files(t)
                 if t.status == Status.COMPLETED and t.filename:
@@ -239,7 +272,8 @@ class DownloadManager:
         else:
             runner = HttpDownloader(t, connections=self.settings.connections,
                                     max_retries=self.settings.max_retries,
-                                    limiter=self.limiter, on_update=on_update)
+                                    limiter=self.limiter, on_update=on_update,
+                                    name_reserver=lambda path, task=t: self._reserve(task, path))
         self._runners[t.id] = runner
         self._changed(t, persist=True)
         threading.Thread(target=self._run, args=(t, runner), daemon=True, name=f"task-{t.id}").start()
@@ -248,7 +282,7 @@ class DownloadManager:
         finished = False
         try:
             ok = runner.run()
-            if ok and not runner.stopped:
+            if ok:
                 t.status = Status.COMPLETED
                 t.finished_at = time.time()
                 t.cookies, t.headers = [], {}     # 完成後不再保留登入資訊
@@ -285,4 +319,7 @@ class DownloadManager:
         for t in self.tasks.values():
             if t.status in Status.ACTIVE or t.status == Status.QUEUED:
                 t.status = Status.PAUSED
-        self.save()
+        try:
+            self.save()
+        except OSError:
+            pass

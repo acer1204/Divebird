@@ -6,10 +6,10 @@ import threading
 import requests
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QAction, QGuiApplication, QPalette
-from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
+from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 
 from .. import autostart
-from ..config import APP_NAME, Settings
+from ..config import APP_NAME, LEGACY_NAMES, Settings, legacy_ports
 from ..engine.manager import DownloadManager
 from ..engine.media_engine import _site_extractors, is_manifest_url, is_media_site
 from ..models import Kind, Task
@@ -241,9 +241,31 @@ def _forward_to_running(port: int, urls: list[str]) -> bool:
         return False
 
 
+def _running_legacy_app() -> str | None:
+    """改名前的舊版（OpenDM）是否仍在執行：回傳它回報的名稱。"""
+    for port in sorted(legacy_ports()):
+        try:
+            name = requests.get(f"http://127.0.0.1:{port}/api/ping", timeout=1).json().get("app")
+        except (requests.RequestException, ValueError, AttributeError):
+            continue
+        if name in LEGACY_NAMES:
+            return name
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv if argv is None else argv)
     urls = [a for a in argv[1:] if a.lower().startswith(("http://", "https://"))]
+    # 必須在讀取設定（會觸發舊資料搬移）之前檢查：舊版還在寫入資料時不能複製
+    legacy = _running_legacy_app()
+    if legacy:
+        app = QApplication(argv)
+        app.setWindowIcon(icons.app_icon())
+        QMessageBox.warning(None, APP_NAME,
+                            f"偵測到舊版 {legacy} 仍在執行。\n\n"
+                            f"請先結束 {legacy}（系統匣圖示按右鍵 → 結束），再重新啟動 {APP_NAME}，\n"
+                            f"設定與下載清單才能完整搬移，瀏覽器整合也才能正常運作。")
+        return 1
     settings = Settings.load()
     if _forward_to_running(settings.port, urls):
         return 0

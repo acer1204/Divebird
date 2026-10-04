@@ -112,3 +112,29 @@ def test_existing_file_gets_unique_name(server, tmp_path):
     assert HttpDownloader(task).run() is True
     assert task.filename == "a (1).zip"
     assert (tmp_path / "a.zip").read_bytes() == b"old"
+
+
+def test_connection_limited_server_still_completes(server, tmp_path):
+    """伺服器限制同時連線數（超過回 503）：多出來的連線放棄後不可把整個下載判為失敗。"""
+    data = server.add("/limited.bin", 8 * 1024 * 1024)
+    server.max_conns = 2
+    server.throttle = 0.03
+    task = make_task(server, "/limited.bin", tmp_path)
+    dl = HttpDownloader(task, connections=8, max_retries=1)
+    assert dl.run() is True
+    assert sha((tmp_path / "limited.bin").read_bytes()) == sha(data)
+    assert dl._conn_limit <= 3, "應自動下修同時連線數"
+
+
+def test_stop_returns_immediately_on_stalled_connection(server, tmp_path):
+    """連線卡住時，stop() 不可等到讀取逾時才返回（會凍結 GUI）。"""
+    server.add("/stall.bin", 8 * 1024 * 1024)
+    server.throttle = 5.0                 # 每 64KB 停 5 秒：模擬卡住的連線
+    task = make_task(server, "/stall.bin", tmp_path)
+    dl = HttpDownloader(task, connections=2)
+    t = threading.Thread(target=dl.run, daemon=True)
+    t.start()
+    time.sleep(1.5)
+    t0 = time.monotonic()
+    dl.stop()
+    assert time.monotonic() - t0 < 0.5
