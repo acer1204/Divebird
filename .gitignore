@@ -1,4 +1,5 @@
 .venv/
+/.venv.old-*/
 .runtime/
 build/
 dist/
@@ -9,3 +10,6 @@ tests/e2e/out/
 assets/icon-concepts/
 *.zip
 *.tar.gz
+# Windows 啟動程式：由 scripts/win_gui_launcher.py 在本機編譯（含替換時的暫存／舊檔）
+/Divebird.exe
+/Divebird.exe.*

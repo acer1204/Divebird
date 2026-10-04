@@ -2,7 +2,10 @@
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 $Py = Join-Path $Root ".venv\Scripts\python.exe"
-if (-not (Test-Path $Py)) { & (Join-Path $PSScriptRoot "setup.ps1") }
+if (-not (Test-Path $Py)) {
+    & (Join-Path $PSScriptRoot "setup.ps1")
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
 Push-Location $Root
 try {
     $Version = & $Py -c "import divebird; print(divebird.__version__)"

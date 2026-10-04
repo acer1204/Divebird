@@ -106,3 +106,24 @@ def test_linux_legacy_desktop_migration(monkeypatch, tmp_path, legacy_text, expe
     autostart.migrate_legacy()
     assert not (tmp_path / "autostart" / "opendm.desktop").exists()
     assert (tmp_path / "autostart" / "divebird.desktop").exists() == expect_new
+
+
+def test_source_checkout_autostarts_through_root_launcher(tmp_path, monkeypatch):
+    # 從原始碼執行且已有 Divebird.exe：自動啟動也經過它（先檢查環境、需要時先更新）
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert autostart.launch_command(tmp_path)[0] != str(tmp_path / "Divebird.exe")
+    (tmp_path / "Divebird.exe").write_bytes(b"")
+    (tmp_path / "Divebird.bat").write_bytes(b"")
+    assert autostart.launch_command(tmp_path) == [str(tmp_path / "Divebird.exe"), "--minimized"]
+
+
+def test_windows_refresh_updates_command_but_keeps_disabled_state(winreg, monkeypatch):
+    monkeypatch.setattr(autostart, "launch_command", lambda: ["C:/new/Divebird.exe", "--minimized"])
+    autostart.refresh()
+    assert winreg.keys[RUN] == {}, "沒有登記自動啟動時不可自行加上"
+    winreg.keys[RUN]["Divebird"] = ("C:/old/divebird-gui.exe -m divebird --minimized", 1)
+    winreg.keys[APPROVED]["Divebird"] = (DISABLED, 3)
+    autostart.refresh()
+    assert winreg.keys[RUN]["Divebird"][0] == "C:/new/Divebird.exe --minimized"
+    assert winreg.keys[APPROVED]["Divebird"] == (DISABLED, 3), "使用者在工作管理員的停用設定要保留"
+    assert not autostart.is_enabled()

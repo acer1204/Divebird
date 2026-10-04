@@ -280,6 +280,10 @@ def main(argv: list[str] | None = None) -> int:
         autostart.migrate_legacy()
     except OSError:
         pass
+    try:   # 自動啟動指令跟上目前的啟動方式（例如改用專案根目錄的 Divebird.exe）
+        autostart.refresh()
+    except OSError:
+        pass
 
     QApplication.setApplicationName(APP_NAME)
     QApplication.setOrganizationName(APP_NAME)

@@ -18,11 +18,16 @@ RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 APPROVED_KEY = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
 
 
-def launch_command() -> list[str]:
+def launch_command(project: Path | None = None) -> list[str]:
     if getattr(sys, "frozen", False):
         return [sys.executable, "--minimized"]
     exe = Path(sys.executable)
     if sys.platform == "win32":
+        # 從原始碼執行：優先用專案根目錄的 Divebird.exe（scripts/launcher.cs），
+        # 它會先檢查執行環境，git pull 改了相依套件時也會先更新再啟動
+        project = project or Path(__file__).resolve().parents[2]
+        if (project / "Divebird.exe").is_file() and (project / "Divebird.bat").is_file():
+            return [str(project / "Divebird.exe"), "--minimized"]
         # 優先用 divebird-gui.exe（CPython 的無視窗 venv 啟動器，見 scripts/win_gui_launcher.py）；
         # uv 建立的 venv 裡 pythonw.exe 其實會開主控台視窗，登入時會跳出黑色視窗
         for name in ("divebird-gui.exe", "pythonw.exe"):
@@ -115,6 +120,20 @@ def set_enabled(enabled: bool) -> None:
         )
     else:
         f.unlink(missing_ok=True)
+
+
+def refresh() -> None:
+    """Windows：已登記的自動啟動指令與目前的啟動方式不同時（例如後來才有 Divebird.exe），改成目前的指令。
+    只改指令本身，不動使用者在工作管理員中的「停用」設定。"""
+    if sys.platform != "win32" or not _win_run_exists(APP_NAME):
+        return
+    import winreg
+    cmd = subprocess.list2cmdline(launch_command())
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
+        current, _ = winreg.QueryValueEx(k, APP_NAME)
+    if current != cmd:
+        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
+            winreg.SetValueEx(k, APP_NAME, 0, winreg.REG_SZ, cmd)
 
 
 def migrate_legacy() -> None:

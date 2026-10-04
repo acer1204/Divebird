@@ -100,11 +100,14 @@ cd Divebird
 
 | 系統 | 啟動 | 建立有圖示的捷徑（選用） |
 | --- | --- | --- |
-| Windows | 按兩下 `Divebird.bat` | `powershell -ExecutionPolicy Bypass -File scripts\create-shortcut.ps1` |
+| Windows | 第一次按兩下 `Divebird.bat`；之後按兩下 `Divebird.exe` | `powershell -ExecutionPolicy Bypass -File scripts\create-shortcut.ps1` |
 | Linux | `./divebird.sh` | `./scripts/create-shortcut.sh` |
 
 第一次啟動時，程式會自動在專案資料夾內建立執行環境（需要幾分鐘）：將 [uv](https://github.com/astral-sh/uv)、獨立的 Python 3.12 與所有套件下載到 `.runtime/` 與 `.venv/`，**不會使用或修改系統上的 Python**。之後啟動只要幾秒。
 
+- Windows：建立環境時，也會用 Windows 內建的 .NET Framework 編譯器在專案根目錄產生 `Divebird.exe` 啟動程式。用它啟動不會出現主控台視窗（`.bat` 檔一定會先閃一下黑色視窗）；若系統封鎖編譯器而沒有產生，仍可用 `Divebird.bat` 啟動（不想產生可設定環境變數 `DIVEBIRD_NO_LAUNCHER=1`）。
+- 用 `git pull` 更新後，若相依套件或啟動程式有變動，下次用 `Divebird.exe`、`Divebird.bat`、捷徑或登入自動啟動開啟時，會先自動更新執行環境（會開一個視窗顯示進度）；上次建立環境中斷時也一樣會自動補完。Divebird 正在執行（包括縮小在系統匣）時不會更新，請先結束再開啟。
+- 搬移、改名或複製專案資料夾後，執行環境需要重建：按兩下 `Divebird.exe` 會詢問是否重建（`Divebird.bat` 也會自動偵測），也可以在專案資料夾開啟終端機，執行 `.\Divebird.bat /repair`。重建前請先結束正在執行的 Divebird；重建失敗時會保留原本的環境。
 - Linux 使用 X11 桌面時，需另外安裝系統套件 `libxcb-cursor0`（Ubuntu／Debian：`sudo apt install libxcb-cursor0`；Fedora：`sudo dnf install xcb-util-cursor`；Arch：`sudo pacman -S xcb-util-cursor`）。免安裝版已內含，不需要安裝。
 - 刪除專案資料夾即可移除執行環境；設定與下載清單存放在 `%APPDATA%\Divebird\`／`~/.config/divebird/`，建立過的捷徑與登入自動啟動需另外移除。
 
@@ -292,11 +295,14 @@ cd Divebird
 
 | System | Start | Create a shortcut with an icon (optional) |
 | --- | --- | --- |
-| Windows | Double-click `Divebird.bat` | `powershell -ExecutionPolicy Bypass -File scripts\create-shortcut.ps1` |
+| Windows | Double-click `Divebird.bat` the first time, then `Divebird.exe` | `powershell -ExecutionPolicy Bypass -File scripts\create-shortcut.ps1` |
 | Linux | `./divebird.sh` | `./scripts/create-shortcut.sh` |
 
 The first launch sets up a self-contained environment inside the project folder, which takes a few minutes: [uv](https://github.com/astral-sh/uv), a standalone Python 3.12 and all packages are downloaded into `.runtime/` and `.venv/`. **Your system Python is neither used nor modified.** Later launches take a few seconds.
 
+- On Windows, setup also uses the .NET Framework compiler built into Windows to create a `Divebird.exe` launcher in the project folder. It starts Divebird without any console window (a `.bat` file always flashes one). If the compiler is blocked and the launcher is not created, `Divebird.bat` still works (set the environment variable `DIVEBIRD_NO_LAUNCHER=1` to skip it).
+- After a `git pull` that changes the dependencies or the launcher, the next launch through `Divebird.exe`, `Divebird.bat`, the shortcut or login autostart updates the environment first (a window shows the progress); an interrupted setup is completed the same way. Nothing is updated while Divebird is running (including in the system tray), so quit it first.
+- After the project folder is moved, renamed or copied, the environment has to be rebuilt: `Divebird.exe` offers to do it (`Divebird.bat` detects it too), or open a terminal in the project folder and run `.\Divebird.bat /repair`. Quit Divebird before rebuilding; if the rebuild fails, the previous environment is kept.
 - On a Linux X11 desktop, install the system package `libxcb-cursor0` (Ubuntu / Debian: `sudo apt install libxcb-cursor0`; Fedora: `sudo dnf install xcb-util-cursor`; Arch: `sudo pacman -S xcb-util-cursor`). The prebuilt package already includes it.
 - Deleting the project folder removes the runtime environment. Settings and the download list stay in `%APPDATA%\Divebird\` / `~/.config/divebird/`, and any shortcuts or login autostart entry you created must be removed separately.
 

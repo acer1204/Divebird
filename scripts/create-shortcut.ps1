@@ -1,4 +1,4 @@
-﻿# 建立 Divebird 捷徑：有程式圖示、雙擊不會跳出主控台視窗。
+﻿# 建立 Divebird 捷徑：有程式圖示、按兩下不會跳出主控台視窗。
 #   預設同時建立在「桌面」與「開始功能表」；也可只選其一或指定資料夾：
 #   powershell -ExecutionPolicy Bypass -File scripts\create-shortcut.ps1 [-Desktop] [-StartMenu] [-Dir <資料夾>]
 param(
@@ -15,14 +15,23 @@ $Exe = Join-Path $Root "dist\Divebird\Divebird.exe"
 # 與 Divebird.bat 相同的優先順序：專案內環境（最新原始碼）> 打包版 > 先建立環境
 if (-not (Test-Path $Py) -and -not (Test-Path $Exe)) {
     & (Join-Path $PSScriptRoot "setup.ps1")
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
+$Launcher = Join-Path $Root "Divebird.exe"
 if (Test-Path $Py) {
-    # divebird-gui.exe：CPython 的無視窗 venv 啟動器（uv 的 pythonw.exe 會多開一個主控台視窗）
+    # divebird-gui.exe：CPython 的無視窗 venv 啟動器（uv 的 pythonw.exe 會多開一個主控台視窗）；
+    # 同一支程式也會建立專案根目錄的 Divebird.exe
     & $Py (Join-Path $PSScriptRoot "win_gui_launcher.py") | Out-Null
-    $Target = $Gui; $Arguments = "-m divebird"
+    if (Test-Path $Launcher) {
+        # 優先用 Divebird.exe：它會先檢查執行環境，git pull 改了相依套件時也會先更新再啟動
+        $Target = $Launcher; $Arguments = ""
+    } else {
+        $Target = $Gui; $Arguments = "-m divebird"
+    }
 } else {
     $Target = $Exe; $Arguments = ""
 }
+if (-not (Test-Path $Target)) { throw "找不到 $Target，執行環境可能還沒建立完成，請稍後再試。" }
 
 $Dirs = @()
 if ($Dir) { $Dirs += $Dir }
