@@ -222,3 +222,23 @@ def test_running_legacy_app_is_detected(monkeypatch, tmp_path):
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+def test_startup_checks_do_not_wait_when_nothing_runs():
+    """沒有其他執行個體時，啟動檢查要立刻結束。
+    Windows 連到沒人監聽的本機埠要重試約 2 秒才失敗，以前每次啟動都白等 2.5 秒。"""
+    from divebird.gui import app as gui_app
+
+    port = _free_port()
+    start = time.perf_counter()
+    assert gui_app._listening(port) is False
+    assert gui_app._forward_to_running(port, []) is False
+    assert time.perf_counter() - start < 0.3
+
+    server = ApiServer(port, on_download=lambda d: None, on_show=lambda: None)
+    assert server.start()
+    try:
+        assert gui_app._listening(port) is True
+    finally:
+        server.stop()
+    assert gui_app._listening(port) is False  # 結束後立刻判斷為沒人在用（殘留的 TIME_WAIT 不算）

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import socket
 import sys
 import threading
 
@@ -226,11 +227,33 @@ class Controller(QObject):
         self.app.quit()
 
 
+def _listening(port: int) -> bool:
+    """本機的這個埠是否有程式在監聽。
+
+    Windows 連到沒人監聽的本機埠，要重試約 2 秒才會失敗；以前啟動時兩次檢查就白等了 2.5 秒。
+    所以先試著綁定這個埠：綁得到就是沒人在用（瞬間完成）；綁不到才用短逾時連線確認。
+    """
+    if sys.platform == "win32":
+        with socket.socket() as s:
+            try:
+                s.bind(("127.0.0.1", port))
+                return False
+            except OSError:
+                pass
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
 def _forward_to_running(port: int, urls: list[str]) -> bool:
     """若已有 Divebird 在執行，把網址交給它並喚出視窗。"""
+    if not _listening(port):
+        return False
     base = f"http://127.0.0.1:{port}"
     try:
-        r = requests.get(base + "/api/ping", timeout=1.5)
+        r = requests.get(base + "/api/ping", timeout=(0.5, 3))
         if not (r.ok and r.json().get("app") == APP_NAME):
             return False
         for u in urls:
@@ -244,8 +267,10 @@ def _forward_to_running(port: int, urls: list[str]) -> bool:
 def _running_legacy_app() -> str | None:
     """改名前的舊版（OpenDM）是否仍在執行：回傳它回報的名稱。"""
     for port in sorted(legacy_ports()):
+        if not _listening(port):
+            continue
         try:
-            name = requests.get(f"http://127.0.0.1:{port}/api/ping", timeout=1).json().get("app")
+            name = requests.get(f"http://127.0.0.1:{port}/api/ping", timeout=(0.5, 2)).json().get("app")
         except (requests.RequestException, ValueError, AttributeError):
             continue
         if name in LEGACY_NAMES:
