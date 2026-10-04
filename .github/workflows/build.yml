@@ -1,0 +1,73 @@
+name: build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+          # 用較舊的 Ubuntu 建置，產出的執行檔可在較多 Linux 發行版上執行
+          - os: ubuntu-22.04
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux 系統函式庫（Qt xcb 外掛所需，會一併打包）
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-render-util0 libxcb-xinerama0 libxcb-shape0 libegl1 fonts-noto-cjk
+
+      - name: 建立自帶環境並打包（Windows）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # 外部程式（pytest、PyInstaller…）失敗時要讓步驟失敗；pwsh 預設只看步驟最後一個指令
+          $PSNativeCommandUseErrorActionPreference = $true
+          ./scripts/setup.ps1
+          ./scripts/test.ps1; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./scripts/build.ps1
+          .venv/Scripts/python.exe tests/smoke_package.py dist/Divebird/Divebird.exe
+
+      - name: 建立自帶環境並打包（Linux）
+        if: runner.os == 'Linux'
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          ./scripts/setup.sh
+          ./scripts/test.sh
+          ./scripts/build.sh
+          .venv/bin/python tests/smoke_package.py dist/Divebird/Divebird
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Divebird-${{ runner.os }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+
+  # 推送 v* 標籤時，把兩個平台的免安裝版發佈到 GitHub Releases
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/*.zip
+            artifacts/*.tar.gz
+          generate_release_notes: true
