@@ -1,170 +1,408 @@
-<p align="center"><img src="assets/divebird.png" width="112" alt="Divebird"></p>
+<p align="center">
+  <img src="assets/divebird.png" width="120" alt="Divebird">
+</p>
 
 <h1 align="center">Divebird</h1>
-<p align="center"><b>看準、俯衝、下載到手。</b><br><i>See it. Dive. Download.</i></p>
 
-Divebird — 開源、跨平台（Windows／Linux）的下載管理員：多連線下載、斷點續傳，網頁影片一鍵下載。
+<p align="center">
+  <b>看準、俯衝、下載到手。</b><br>
+  <i>See it. Dive. Download.</i>
+</p>
 
-Divebird is an open-source download manager for Windows and Linux, with multi-connection downloads, resume support,
-and a one-click button for web videos.
+<p align="center">
+  <a href="https://github.com/acer1204/Divebird/releases/latest"><img src="https://img.shields.io/github/v/release/acer1204/Divebird?color=0fa594" alt="Release"></a>
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux-0c6e99" alt="Platform: Windows | Linux">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-0c6e99" alt="License: MIT"></a>
+  <a href="https://github.com/acer1204/Divebird/actions/workflows/build.yml"><img src="https://github.com/acer1204/Divebird/actions/workflows/build.yml/badge.svg" alt="Build"></a>
+</p>
 
-搭配專案內附的 Chrome 擴充功能：在網頁上播放影片時，影片右上角會出現 **「下載此影片」懸浮按鈕**，點一下就交給 Divebird 下載。
+<p align="center">
+  <a href="#繁體中文">繁體中文</a> · <a href="#english">English</a>
+</p>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/main-dark.png">
+  <img src="docs/images/main-light.png" alt="Divebird 主視窗 / main window">
+</picture>
+
+---
+
+## 繁體中文
+
+Divebird 是開源、跨平台（Windows／Linux）的下載管理員，支援多連線下載與斷點續傳，還能一鍵下載網頁影片。搭配隨附的 Chrome 擴充功能，在網頁上播放影片時，影片右上角會出現「**下載此影片**」按鈕，點一下就交給 Divebird 下載。
 
 > 名字的由來：鰹鳥看準海裡的魚，收起翅膀俯衝，一次就叼走。Divebird 也是這樣——看準網頁上的影片，一鍵下載。
 
+### 功能特色
+
 | 功能 | 說明 |
 | --- | --- |
-| 多連線加速 | 一個檔案切成多段、同時以多條連線下載（預設 8 條），並採用「動態分段」：先完成的連線會接手剩餘最多的分段，讓連線一直滿載 |
-| 續傳 | 暫停、斷線、關閉程式後都能從中斷處繼續（`.part` + `.part.json` 進度檔） |
-| 影片懸浮按鈕 | 自動偵測網頁中的 `<video>`，包含被播放器遮罩蓋住的、iframe 內嵌的、全螢幕中的影片 |
-| 串流嗅探 | 監聽網路請求，偵測 HLS（`.m3u8`）、DASH（`.mpd`）與影音檔，下載後自動合併成 mp4 |
-| 影音網站 | 內建 yt-dlp，支援 YouTube、Bilibili 等上千個網站，可選畫質或只下載音訊（M4A / MP3） |
-| 攔截瀏覽器下載 | 一般檔案下載自動轉交 Divebird 多連線下載（按住 **Alt** 點連結可略過） |
-| 其他 | 下載佇列與同時下載數、全域限速、分類、搜尋、拖放網址、右鍵選單、系統匣、完成通知、開機自動啟動、深色模式 |
+| **影片懸浮按鈕** | 自動偵測網頁中的影片，包含被播放器遮罩蓋住的、iframe 內嵌的、全螢幕播放器中的影片；滑鼠移到影片上就會出現「下載此影片」按鈕 |
+| **串流偵測** | 監聽網路請求，抓出 HLS（`.m3u8`）、DASH（`.mpd`）串流與影音檔；偵測到多個來源時會跳出選單讓你挑選，串流下載完成後自動合併成 MP4（可在設定改為 MKV） |
+| **影音網站** | 內建 [yt-dlp](https://github.com/yt-dlp/yt-dlp)，支援上千個影音網站；下載前可選畫質，或只下載音訊（M4A／MP3） |
+| **多連線下載** | 將檔案切成多段，同時以多條連線下載（預設 8 條）；先完成的連線會把剩餘最多的分段從中間切開、接手後半段，讓每條連線都保持忙碌 |
+| **斷點續傳** | 暫停、斷線或關閉程式後，都能從中斷處繼續（伺服器需支援續傳） |
+| **攔截瀏覽器下載** | 一般檔案的下載會自動轉交 Divebird 多連線下載；按住 **Alt** 再點連結，則改由瀏覽器自行下載 |
+| **內建執行環境** | 免安裝版已內含 Python、Qt、yt-dlp、FFmpeg、Deno，不需要另外安裝任何軟體 |
+| **其他** | 下載佇列、同時下載數與全域限速、分類與搜尋、拖曳網址、系統匣、完成通知、登入時自動啟動、深色模式 |
 
-## 程式自帶環境
+### 截圖
 
-Divebird **不需要使用者安裝 Python、ffmpeg 或其他任何東西**：
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/floating-button.jpg" alt="影片上的懸浮按鈕"></td>
+    <td width="50%"><img src="docs/images/stream-menu.jpg" alt="偵測到多個串流時的選單"></td>
+  </tr>
+  <tr>
+    <td align="center">滑鼠移到影片上，右上角會出現「下載此影片」按鈕</td>
+    <td align="center">偵測到多個串流時，選擇要下載哪一個</td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/images/dialog-dark.png">
+        <img src="docs/images/dialog-light.png" alt="下載前選擇畫質與檔名">
+      </picture>
+    </td>
+    <td width="50%" align="center"><img src="docs/images/popup.png" width="300" alt="擴充功能彈出視窗"></td>
+  </tr>
+  <tr>
+    <td align="center">下載前確認檔名、畫質與儲存位置</td>
+    <td align="center">擴充功能彈出視窗：偵測到的影音與設定</td>
+  </tr>
+</table>
 
-- **打包版（給一般使用者）**：`dist/Divebird/` 內含 Python 執行環境、Qt、yt-dlp，以及 `tools/` 裡的 ffmpeg（影音合併）與 deno（yt-dlp 解析 YouTube 需要的 JavaScript 執行環境）。解壓縮即可執行。
-- **原始碼開發**：`scripts/setup.*` 會把 uv、獨立的 CPython 3.12、套件快取與虛擬環境全部放在專案目錄內（`.runtime/`、`.venv/`），不使用、也不修改系統上的 Python。刪掉專案資料夾就完全移除。
+### 安裝與執行
 
-## 安裝與執行
+#### 方式一：下載免安裝版（推薦）
 
-先取得原始碼（或到 Releases 下載打包好的免安裝版）：
+到 [Releases](https://github.com/acer1204/Divebird/releases/latest) 下載對應的檔案：
+
+| 系統 | 檔案 | 執行方式 |
+| --- | --- | --- |
+| Windows 10／11（64 位元） | `Divebird-<版本>-windows-x64.zip` | 解壓縮後，按兩下 `Divebird\Divebird.exe` |
+| Linux x86_64 | `Divebird-<版本>-linux-x86_64.tar.gz` | 解壓縮後執行 `./Divebird/install.sh` |
+
+- **Windows**：程式沒有數位簽章，第一次執行若出現「Windows 已保護您的電腦」，請按「其他資訊」→「仍要執行」。
+- **Linux**：
+  - 需要 glibc 2.35 以上的發行版，例如 Ubuntu 22.04 以上、Debian 12 以上、Fedora 36 以上。
+  - `install.sh` 會將程式安裝到 `~/.local/share/divebird`，在應用程式選單建立捷徑、建立 `divebird` 指令，並設定登入時自動啟動（若不需要自動啟動，請改為執行 `./Divebird/install.sh --no-autostart`）。
+  - 解除安裝：刪除 `~/.local/share/divebird`、`~/.local/share/applications/divebird.desktop`、`~/.config/autostart/divebird.desktop` 與 `~/.local/bin/divebird`。
+  - GNOME 預設沒有系統匣，可安裝 GNOME 擴充套件「AppIndicator and KStatusNotifierItem Support」；沒有系統匣時，關閉視窗會改為最小化到工作列（按 **Ctrl+Q** 結束程式）。
+- 每個版本都附有 `SHA256SUMS.txt`，可用來驗證下載的檔案是否完整。
+
+#### 方式二：從原始碼執行
 
 ```bash
 git clone https://github.com/acer1204/Divebird.git
 cd Divebird
 ```
 
-### Windows
+| 系統 | 啟動 | 建立有圖示的捷徑（選用） |
+| --- | --- | --- |
+| Windows | 按兩下 `Divebird.bat` | `powershell -ExecutionPolicy Bypass -File scripts\create-shortcut.ps1` |
+| Linux | `./divebird.sh` | `./scripts/create-shortcut.sh` |
 
-| 方式 | 怎麼做 |
-| --- | --- |
-| **雙擊 `Divebird.bat`**（專案根目錄） | 最簡單。第一次會自動在專案內建立環境（需幾分鐘），之後秒開 |
-| **桌面／開始功能表捷徑** | 執行一次 `powershell -ExecutionPolicy Bypass -File scripts\create-shortcut.ps1`，之後點有圖示的捷徑啟動，不會閃出黑色視窗 |
-| **打包版 exe** | 解壓縮 `Divebird-<版本>-windows-x64.zip`，雙擊 `Divebird\Divebird.exe`（不需要任何安裝） |
+第一次啟動時，程式會自動在專案資料夾內建立執行環境（需要幾分鐘）：將 [uv](https://github.com/astral-sh/uv)、獨立的 Python 3.12 與所有套件下載到 `.runtime/` 與 `.venv/`，**不會使用或修改系統上的 Python**。之後啟動只要幾秒。
 
-`Divebird.bat` 的判斷順序：專案內已有環境（`.venv`）→ 執行最新原始碼；否則旁邊有打包版 → 執行 exe；都沒有 → 先建立環境。
+- Linux 使用 X11 桌面時，需另外安裝系統套件 `libxcb-cursor0`（Ubuntu／Debian：`sudo apt install libxcb-cursor0`；Fedora：`sudo dnf install xcb-util-cursor`；Arch：`sudo pacman -S xcb-util-cursor`）。免安裝版已內含，不需要安裝。
+- 刪除專案資料夾即可移除執行環境；設定與下載清單存放在 `%APPDATA%\Divebird\`／`~/.config/divebird/`，建立過的捷徑與登入自動啟動需另外移除。
 
-打包成免安裝版：`powershell -ExecutionPolicy Bypass -File scripts\build.ps1` → `dist\`
+### 安裝 Chrome 擴充功能
 
-> 從檔案總管雙擊 `.bat` 或用 `powershell -ExecutionPolicy Bypass -File …` 執行，
-> 可避開 Windows 預設「禁止執行 .ps1 指令碼」的限制。
+擴充功能已隨附在免安裝版與原始碼中（未上架 Chrome 線上應用程式商店），請依下列步驟手動載入：
 
-### Linux
+1. 在網址列輸入 `chrome://extensions` 並按 Enter（Microsoft Edge 為 `edge://extensions`）。
+2. 打開「**開發人員模式**」（Chrome 在右上角，Edge 在左側欄）。
+3. 按「**載入未封裝項目**」，選擇 `extension` 資料夾：
+   - 免安裝版：`Divebird/extension`
+   - Linux 執行 `install.sh` 後：`~/.local/share/divebird/extension`
+   - 從原始碼執行：專案根目錄的 `extension`
+4. 建議點工具列上的拼圖圖示（擴充功能），將 Divebird 固定到工具列。
 
-| 方式 | 怎麼做 |
-| --- | --- |
-| **`./divebird.sh`**（專案根目錄） | 第一次會自動在專案內建立環境，之後直接啟動 |
-| **應用程式選單捷徑** | 執行一次 `./scripts/create-shortcut.sh`，之後從選單點 Divebird |
-| **打包版** | `tar -xzf Divebird-<版本>-linux-x86_64.tar.gz && ./Divebird/install.sh`（安裝到 `~/.local/share/divebird`，建立選單捷徑與登入自動啟動） |
+使用擴充功能時，Divebird 桌面程式必須保持執行；點工具列上的 Divebird 圖示開啟彈出視窗，右上角顯示「已連線」即表示正常。圖示上的數字是目前分頁偵測到的影音數量。
 
-打包成免安裝版：`./scripts/build.sh` → `dist/`
+### 使用方式
 
-> Qt 圖形介面在 X11 下需要系統的 `libxcb-cursor0`（Ubuntu/Debian：`sudo apt install libxcb-cursor0`）。
-> 用 Wayland 桌面則不需要。打包時若建置機器已安裝，會一併打包進去。
->
-> GNOME 預設沒有系統匣，可安裝「AppIndicator and KStatusNotifierItem Support」擴充；
-> 沒有系統匣時，關閉視窗會改為最小化繼續在背景執行（按 **Ctrl+Q** 結束程式）。
+- **懸浮按鈕**：把滑鼠移到影片上，按右上角的「下載此影片」。
+  - 只偵測到一個影片檔或串流：直接交給 Divebird 下載。
+  - 偵測到多個來源：跳出選單讓你選（HLS／DASH／MP4，或以 yt-dlp 解析整個網頁）。
+  - 沒偵測到影片檔或串流（例如 YouTube）：整個網頁交給 yt-dlp 解析，再於 Divebird 視窗中選擇畫質。
+- **右鍵選單**：在連結或影片／音訊上按右鍵，選擇「用 Divebird 下載此連結」或「用 Divebird 下載此影片／音訊」；在網頁空白處按右鍵，選擇「用 Divebird 解析此頁面的影片」。
+- **攔截瀏覽器下載**：一般檔案的下載會自動轉交 Divebird；按住 **Alt** 再點連結，則由瀏覽器自行下載。可在彈出視窗中關閉此功能。
+- **桌面程式**：按「新增網址」或直接把連結拖曳到視窗；在清單上按右鍵可開啟檔案、重新下載、複製網址。
 
-## 安裝 Chrome 擴充功能
+收到下載時，Divebird 會先顯示「下載檔案資訊」視窗（檔名、大小、畫質、儲存位置）；勾選「不再顯示此視窗」即可改為直接下載，之後可在設定中改回。
 
-1. 開啟 `chrome://extensions`（Edge 為 `edge://extensions`）
-2. 開啟右上角「**開發人員模式**」
-3. 按「**載入未封裝項目**」，選擇 `extension` 資料夾（打包版在 `Divebird/extension`）
-4. 建議把 Divebird 圖示釘選到工具列
-
-擴充功能圖示上的數字是目前分頁偵測到的影音數量；圖示旁的綠點代表已連上 Divebird。
-
-## 使用方式
-
-- **懸浮按鈕**：把滑鼠移到播放中的影片上 → 右上角出現「下載此影片」→ 點擊
-  - 影片是一般檔案（mp4）或只偵測到一個串流 → 直接送出
-  - 偵測到多個來源 → 跳出選單讓你挑（HLS / DASH / MP4 / 以 yt-dlp 解析網頁）
-  - YouTube 這類網站 → 整頁交給 yt-dlp，在 Divebird 的視窗中選擇畫質
-- **擴充功能彈出視窗**：列出目前分頁偵測到的所有影音、「解析此頁面的影片」、開關設定
-- **右鍵選單**：在連結 / 影片 / 頁面上按右鍵 → 「用 Divebird 下載…」
-- **桌面程式**：「新增網址」、或直接把連結拖曳進視窗
-
-收到下載時，Divebird 會顯示「下載檔案資訊」視窗（檔名、大小、畫質、儲存位置），可勾選「不再顯示」改為直接下載。
-
-## 架構
-
-```
-Chrome 擴充功能 (extension/)                 Divebird 桌面程式 (src/divebird/)
-┌─────────────────────────────┐             ┌──────────────────────────────────────┐
-│ content.js  懸浮按鈕、選單     │─┐           │ server.py   本機 API 127.0.0.1:17890   │
-│ background.js               │ │ HTTP/JSON │ gui/        PySide6 介面、系統匣        │
-│   webRequest 嗅探 m3u8/mpd   │ ├─────────▶│ engine/manager.py   佇列、排程、持久化   │
-│   Cookie / Referer 收集      │ │           │ engine/http_engine.py 多連線動態分段     │
-│   攔截 chrome.downloads      │─┘           │ engine/media_engine.py yt-dlp+ffmpeg    │
-│ popup.html  偵測清單與設定     │             └──────────────────────────────────────┘
-└─────────────────────────────┘
-```
-
-- 擴充功能把網址連同該網站的 Cookie、Referer、User-Agent 一起交給桌面程式，所以需要登入的影片也能下載。
-- 一般檔案走自製的多連線引擎；HLS / DASH / 影音網站交給 yt-dlp（同樣多片段並行），再由 ffmpeg 合併。
-- **安全性**：本機 API 只監聽 `127.0.0.1`；會檢查 `Host` 標頭防 DNS rebinding；帶 `Origin` 的請求只接受擴充功能來源，一般網頁無法偷偷呼叫。下載完成後即清除該任務保存的 Cookie。
-
-## 設定與資料位置
+### 設定與資料位置
 
 | 項目 | Windows | Linux |
 | --- | --- | --- |
 | 設定、下載清單 | `%APPDATA%\Divebird\` | `~/.config/divebird/` |
-| 預設下載資料夾 | `~/Downloads` | XDG 下載資料夾（如 `~/下載`） |
+| 預設下載資料夾 | `下載`（`%USERPROFILE%\Downloads`） | XDG 下載資料夾（例如 `~/下載`） |
 
-可攜模式：在 `Divebird.exe`（或 `Divebird`）旁放一個名為 `portable` 的空檔案，設定就會存在程式旁的 `data/` 資料夾。
+- **可攜模式**（免安裝版）：在 `Divebird.exe`（Linux 為 `Divebird`）所在的資料夾中，建立一個名為 `portable`、沒有副檔名的空檔案（`portable.txt` 無效），設定與下載清單就會改存放在程式旁的 `data/` 資料夾。
+- 桌面程式與擴充功能透過本機的 `127.0.0.1:17890` 連線。若在 Divebird 設定中變更了「本機 API 埠號」，請在擴充功能彈出視窗的「Divebird 連接埠」欄位填入相同的數字。
 
-若更改了 API 埠號，記得在擴充功能彈出視窗中改成相同的埠號。
+### 自行打包
 
-從舊名稱 OpenDM 升級：第一次啟動 Divebird 時，會自動把 `%APPDATA%\OpenDM`（Linux 為 `~/.config/opendm`）的設定與下載清單複製過來，
-舊資料夾保留不動，確認無誤後可自行刪除；舊的開機自動啟動設定也會換成新名稱（若你曾在系統中停用它，則維持停用）。
+| 系統 | 指令 | 產出 |
+| --- | --- | --- |
+| Windows | `powershell -ExecutionPolicy Bypass -File scripts\build.ps1` | `dist\Divebird\`、`dist\Divebird-<版本>-windows-x64.zip` |
+| Linux | `./scripts/build.sh` | `dist/Divebird/`、`dist/Divebird-<版本>-linux-<架構>.tar.gz`（例如 `linux-x86_64`） |
 
-- 升級前請先結束舊版 OpenDM（系統匣圖示按右鍵 → 結束）；舊版仍在執行時，Divebird 會提示你先關閉它。
-- 到 `chrome://extensions` 移除舊的 OpenDM 擴充功能，再重新「載入未封裝項目」選擇新的 `extension` 資料夾
-  （若是同一個資料夾，按「重新載入」即可），否則舊擴充功能會一直顯示「未連線」。
+- 尚未建立執行環境時，打包腳本會先自動執行 `scripts/setup.*`。
+- Linux 打包會一併包進建置機器上的系統函式庫，打包出的程式只能在 glibc 版本不低於建置機器的發行版上執行；若要支援更多發行版，請在較舊的系統上建置。
+- 推送 `v` 開頭的標籤（例如 `v1.0.1`）時，GitHub Actions 會在 Windows 與 Ubuntu 22.04 上建置、測試，並自動發佈到 Releases。
 
-## 開發與測試
-
-```bash
-./scripts/test.sh          # Windows：powershell -ExecutionPolicy Bypass -File scripts\test.ps1
-```
-
-單元 / 整合測試（`tests/`）涵蓋：多連線分段下載、動態分段、暫停續傳、不支援 Range 的伺服器、
-Content-Disposition 中文檔名、佇列與持久化、本機 API 的安全檢查、以 ffmpeg 產生的 HLS 串流下載與合併。
-
-擴充功能端對端測試（以 Playwright 啟動載入擴充功能的 Chromium，實際點擊懸浮按鈕）。
-使用 `scripts/setup.*` 放在專案內的 uv（Windows 為 `.runtime\uv\uv.exe`）：
+### 開發與測試
 
 ```bash
-.runtime/uv/uv run --no-project --with playwright python -m playwright install chromium   # 第一次
-.runtime/uv/uv run --no-project --with playwright python tests/e2e/run_extension_e2e.py
+./scripts/test.sh                                           # Linux 單元／整合測試
+powershell -ExecutionPolicy Bypass -File scripts\test.ps1   # Windows 單元／整合測試
 ```
 
-打包版煙霧測試（啟動打包好的程式，透過 API 實際下載一般檔案與 HLS 串流）：
+- 擴充功能端對端測試（以 Playwright 啟動載入擴充功能的 Chromium，實際點擊懸浮按鈕），使用由 `scripts/setup.*` 安裝在專案內的 uv（Windows 為 `.runtime\uv\uv.exe`）：
 
-```bash
-.venv/bin/python tests/smoke_package.py dist/Divebird/Divebird
+  ```bash
+  .runtime/uv/uv run --no-project --with playwright python -m playwright install chromium   # 第一次
+  .runtime/uv/uv run --no-project --with playwright python tests/e2e/run_extension_e2e.py
+  ```
+
+- 打包版煙霧測試：`.venv/bin/python tests/smoke_package.py dist/Divebird/Divebird`（Windows：`.venv\Scripts\python.exe tests\smoke_package.py dist\Divebird\Divebird.exe`）
+
+### 架構
+
+擴充功能負責在瀏覽器中偵測影片與串流，再透過本機 API 交給桌面程式下載：
+
+```mermaid
+flowchart LR
+  subgraph EXT["Chrome 擴充功能（extension/）"]
+    C["content.js<br>懸浮按鈕、選單"]
+    P["popup.html<br>偵測清單與設定"]
+    B["background.js<br>偵測 m3u8／mpd 串流<br>帶上 Cookie／Referer<br>攔截瀏覽器下載"]
+  end
+  subgraph APP["Divebird 桌面程式（src/divebird/）"]
+    S["server.py<br>本機 API 127.0.0.1:17890"]
+    G["gui/<br>PySide6 介面、系統匣"]
+    M["engine/manager.py<br>佇列、排程、續傳"]
+    H["engine/http_engine.py<br>多連線動態分段"]
+    E["engine/media_engine.py<br>yt-dlp + FFmpeg"]
+  end
+  C --> B
+  P --> B
+  B -- "HTTP/JSON" --> S
+  S --> M
+  G --> M
+  M --> H
+  M --> E
 ```
 
-```powershell
-.venv\Scripts\python.exe tests\smoke_package.py dist\Divebird\Divebird.exe
-```
+### 常見問題
 
-`.github/workflows/build.yml` 會在 GitHub Actions 上同時建置 Windows 與 Linux 版本。
+- **擴充功能顯示「未連線」**：確認 Divebird 桌面程式正在執行（它可能已縮小到系統匣），且桌面程式與擴充功能設定的埠號相同。
+- **某個影片下載失敗**：影音網站常改版，請將 Divebird 更新到[最新版本](https://github.com/acer1204/Divebird/releases/latest)；也可以改用選單中的其他來源試試。
+- **安全性**：本機 API 只監聽 `127.0.0.1`；帶有 `Origin` 標頭的請求只接受來自瀏覽器擴充功能的來源，因此一般網頁無法呼叫。下載完成後，會清除該任務保存的 Cookie（不影響瀏覽器本身的 Cookie）。
 
-> **Linux 打包注意**：PyInstaller 無法跨平台打包，而且會把建置機器上的系統函式庫一起打包，
-> 所以產物只能在 **glibc 版本不低於建置機器** 的發行版上執行。要發佈給大多數使用者，
-> 請在較舊的系統上建置（CI 使用 Ubuntu 22.04，可在 glibc 2.35 以上的發行版執行）。
->
-> 內附的 Linux ffmpeg 是靜態連結 glibc 的版本，解析 HLS 的 MPEG-TS 片段時會載入系統的 gconv 模組，
-> 在 glibc 較新的系統（如 Ubuntu 26.04）上會當掉。Divebird 會自動以包裝腳本將 `GCONV_PATH`
-> 指向空目錄來避開（見 `src/divebird/engine/tools.py`），`tests/test_media_engine.py` 有對應的迴歸測試。
+### 限制
 
-## 限制
-
-- 使用 DRM（Widevine 等）加密的串流，例如 Netflix、Disney+、Spotify，無法下載。
-- 直播串流目前不支援。
+- 使用 DRM（如 Widevine）加密的串流無法下載，例如 Netflix、Disney+、Spotify 上的內容。
+- 目前不支援直播串流。
+- 介面目前只有繁體中文。
 - 請遵守各網站的使用條款與著作權法規，只下載你有權保存的內容。
+
+### 授權
+
+Divebird 以 [MIT 授權](LICENSE) 釋出。免安裝版隨附的第三方元件依其各自的授權條款散布，主要包括：[Python](https://www.python.org/)（PSF License）、[Qt／PySide6](https://www.qt.io/qt-for-python)（LGPLv3）、[yt-dlp](https://github.com/yt-dlp/yt-dlp)（Unlicense）、[FFmpeg](https://ffmpeg.org/)（GPL，經由 [imageio-ffmpeg](https://github.com/imageio/imageio-ffmpeg) 取得）、[Deno](https://deno.com/)（MIT）、[Requests](https://github.com/psf/requests)（Apache 2.0）。
+
+---
+
+## English
+
+Divebird is an open-source, cross-platform (Windows / Linux) download manager with multi-connection downloads, resume support, and one-click downloads of web videos. With the bundled Chrome extension, a "**下載此影片**" (Download this video) button appears in the top-right corner of any video you play in the browser — click it and Divebird takes over.
+
+> Why the name? A gannet spots a fish, folds its wings, dives, and catches it in one move. Divebird does the same: spot a video on the page and grab it with one click.
+
+The app's interface is currently available only in Traditional Chinese. UI labels quoted below are given in Chinese, followed by an English translation.
+
+### Features
+
+| Feature | Description |
+| --- | --- |
+| **Floating video button** | Detects videos on web pages, including ones covered by player overlays, embedded in iframes, or inside a fullscreen player, and shows a "下載此影片" (Download this video) button on hover |
+| **Stream detection** | Watches network requests for HLS (`.m3u8`) and DASH (`.mpd`) streams and media files; when several sources are found, a menu lets you pick one, and downloaded streams are automatically merged into MP4 (or MKV, set in the settings) |
+| **Video sites** | Bundles [yt-dlp](https://github.com/yt-dlp/yt-dlp), which supports more than a thousand video sites; choose the quality before downloading, or grab audio only (M4A / MP3) |
+| **Multi-connection downloads** | Splits a file into segments and downloads them over several connections at once (8 by default); when a connection finishes, it takes over half of the segment with the most data left, so every connection stays busy |
+| **Resume** | Pick up where you left off after pausing, losing the connection, or closing the app (if the server supports resuming) |
+| **Browser download takeover** | Regular file downloads are handed to Divebird automatically; hold **Alt** while clicking a link to let the browser download it instead |
+| **Self-contained** | The prebuilt packages ship with Python, Qt, yt-dlp, FFmpeg and Deno, so there is nothing else to install |
+| **And more** | Download queue, limits on simultaneous downloads and total speed, categories and search, drag-and-drop URLs, system tray, completion notifications, start at login, dark mode |
+
+### Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/floating-button.jpg" alt="Floating button on a video"></td>
+    <td width="50%"><img src="docs/images/stream-menu.jpg" alt="Menu shown when several streams are found"></td>
+  </tr>
+  <tr>
+    <td align="center">Hover over a video and the download button appears in the top-right corner</td>
+    <td align="center">Pick a source when several streams are detected</td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/images/dialog-dark.png">
+        <img src="docs/images/dialog-light.png" alt="Choose quality and file name before downloading">
+      </picture>
+    </td>
+    <td width="50%" align="center"><img src="docs/images/popup.png" width="300" alt="Extension popup"></td>
+  </tr>
+  <tr>
+    <td align="center">Confirm the file name, quality and save location before downloading</td>
+    <td align="center">Extension popup: detected media and settings</td>
+  </tr>
+</table>
+
+### Install and run
+
+#### Option 1: download a prebuilt package (recommended)
+
+Download the file for your system from [Releases](https://github.com/acer1204/Divebird/releases/latest):
+
+| System | File | How to run |
+| --- | --- | --- |
+| Windows 10 / 11 (64-bit) | `Divebird-<version>-windows-x64.zip` | Unzip it and double-click `Divebird\Divebird.exe` |
+| Linux x86_64 | `Divebird-<version>-linux-x86_64.tar.gz` | Extract it and run `./Divebird/install.sh` |
+
+- **Windows**: the app is not code-signed. If SmartScreen shows "Windows protected your PC", click "More info" → "Run anyway".
+- **Linux**:
+  - Requires glibc 2.35 or newer, e.g. Ubuntu 22.04+, Debian 12+ or Fedora 36+.
+  - `install.sh` installs Divebird to `~/.local/share/divebird`, adds an application-menu entry and a `divebird` command, and sets Divebird to start automatically at login (to skip autostart, run `./Divebird/install.sh --no-autostart` instead).
+  - To uninstall, delete `~/.local/share/divebird`, `~/.local/share/applications/divebird.desktop`, `~/.config/autostart/divebird.desktop` and `~/.local/bin/divebird`.
+  - GNOME has no system tray by default; you can add one with the "AppIndicator and KStatusNotifierItem Support" extension. Without a tray, closing the window minimizes it to the taskbar instead of hiding it in the tray (press **Ctrl+Q** to quit).
+- Every release includes `SHA256SUMS.txt` so you can verify your download.
+
+#### Option 2: run from source
+
+```bash
+git clone https://github.com/acer1204/Divebird.git
+cd Divebird
+```
+
+| System | Start | Create a shortcut with an icon (optional) |
+| --- | --- | --- |
+| Windows | Double-click `Divebird.bat` | `powershell -ExecutionPolicy Bypass -File scripts\create-shortcut.ps1` |
+| Linux | `./divebird.sh` | `./scripts/create-shortcut.sh` |
+
+The first launch sets up a self-contained environment inside the project folder, which takes a few minutes: [uv](https://github.com/astral-sh/uv), a standalone Python 3.12 and all packages are downloaded into `.runtime/` and `.venv/`. **Your system Python is neither used nor modified.** Later launches take a few seconds.
+
+- On a Linux X11 desktop, install the system package `libxcb-cursor0` (Ubuntu / Debian: `sudo apt install libxcb-cursor0`; Fedora: `sudo dnf install xcb-util-cursor`; Arch: `sudo pacman -S xcb-util-cursor`). The prebuilt package already includes it.
+- Deleting the project folder removes the runtime environment. Settings and the download list stay in `%APPDATA%\Divebird\` / `~/.config/divebird/`, and any shortcuts or login autostart entry you created must be removed separately.
+
+### Install the Chrome extension
+
+The extension is included in the prebuilt packages and the source code. It is not on the Chrome Web Store, so load it manually:
+
+1. Type `chrome://extensions` in the address bar and press Enter (Microsoft Edge: `edge://extensions`).
+2. Turn on **Developer mode** (top-right corner in Chrome, left sidebar in Edge).
+3. Click **Load unpacked** and select the `extension` folder:
+   - Prebuilt package: `Divebird/extension`
+   - Linux after `install.sh`: `~/.local/share/divebird/extension`
+   - Running from source: `extension` in the project root
+4. (Recommended) Click the puzzle-piece icon in the toolbar and pin Divebird.
+
+The extension needs the Divebird desktop app to be running. Click the Divebird icon in the toolbar to open the popup; "已連線" (connected) in its top-right corner means everything is working. The number on the icon's badge shows how many media items were detected in the current tab.
+
+### Usage
+
+- **Floating button**: hover over a video and click "下載此影片" (Download this video) in the top-right corner.
+  - If only one video file or stream is found, it is sent to Divebird right away.
+  - If several sources are found, a menu lets you choose (HLS / DASH / MP4, or let yt-dlp analyze the whole page).
+  - If no file or stream is detected (e.g. on YouTube), the whole page goes to yt-dlp and you choose the quality in the Divebird window.
+- **Context menu**: right-click a link or a video/audio element and choose "用 Divebird 下載此連結" (download this link) or "用 Divebird 下載此影片／音訊" (download this video/audio); right-click the page and choose "用 Divebird 解析此頁面的影片" (find videos on this page).
+- **Browser download takeover**: regular file downloads are handed to Divebird; hold **Alt** while clicking a link to let the browser download it instead. You can turn this off in the popup.
+- **Desktop app**: click "新增網址" (add URL) or drag a link into the window; right-click an item to open the file, download it again or copy its URL.
+
+When Divebird receives a download, it first shows the "下載檔案資訊" (download details) dialog with the file name, size, quality and save location. Tick "不再顯示此視窗" (don't show this window again) to start downloads immediately; you can turn the dialog back on in the settings.
+
+### Settings and data
+
+| Item | Windows | Linux |
+| --- | --- | --- |
+| Settings and download list | `%APPDATA%\Divebird\` | `~/.config/divebird/` |
+| Default download folder | `%USERPROFILE%\Downloads` | Your Downloads folder (XDG, e.g. `~/Downloads`) |
+
+- **Portable mode** (prebuilt packages): put an empty file named `portable` (no extension; `portable.txt` will not work) next to `Divebird.exe` (or `Divebird` on Linux), and settings and the download list are stored in a `data/` folder beside the app.
+- The desktop app and the extension communicate locally over `127.0.0.1:17890`. If you change "本機 API 埠號" (local API port) in the app's settings, enter the same number in "Divebird 連接埠" (Divebird port) in the extension popup.
+
+### Build it yourself
+
+| System | Command | Output |
+| --- | --- | --- |
+| Windows | `powershell -ExecutionPolicy Bypass -File scripts\build.ps1` | `dist\Divebird\`, `dist\Divebird-<version>-windows-x64.zip` |
+| Linux | `./scripts/build.sh` | `dist/Divebird/`, `dist/Divebird-<version>-linux-<arch>.tar.gz` (e.g. `linux-x86_64`) |
+
+- If the environment has not been set up yet, the build scripts run `scripts/setup.*` first.
+- A Linux build bundles system libraries from the build machine, so it only runs on distributions whose glibc is at least as new as the build machine's. To support more distributions, build on an older system.
+- Pushing a tag that starts with `v` (for example `v1.0.1`) makes GitHub Actions build and test on Windows and Ubuntu 22.04, then publish the packages to Releases.
+
+### Development and testing
+
+```bash
+./scripts/test.sh                                           # unit / integration tests on Linux
+powershell -ExecutionPolicy Bypass -File scripts\test.ps1   # unit / integration tests on Windows
+```
+
+- End-to-end extension test (Playwright launches Chromium with the extension loaded and clicks the floating button), using the project-local uv installed by `scripts/setup.*` (`.runtime\uv\uv.exe` on Windows):
+
+  ```bash
+  .runtime/uv/uv run --no-project --with playwright python -m playwright install chromium   # first time
+  .runtime/uv/uv run --no-project --with playwright python tests/e2e/run_extension_e2e.py
+  ```
+
+- Smoke test of a packaged build: `.venv/bin/python tests/smoke_package.py dist/Divebird/Divebird` (Windows: `.venv\Scripts\python.exe tests\smoke_package.py dist\Divebird\Divebird.exe`)
+
+### Architecture
+
+The extension finds videos and streams in the browser and hands them to the desktop app through the local API:
+
+```mermaid
+flowchart LR
+  subgraph EXT["Chrome extension (extension/)"]
+    C["content.js<br>floating button, menu"]
+    P["popup.html<br>detected media, settings"]
+    B["background.js<br>detects m3u8 / mpd streams<br>adds Cookie / Referer<br>takes over browser downloads"]
+  end
+  subgraph APP["Divebird desktop app (src/divebird/)"]
+    S["server.py<br>local API 127.0.0.1:17890"]
+    G["gui/<br>PySide6 UI, system tray"]
+    M["engine/manager.py<br>queue, scheduling, resume"]
+    H["engine/http_engine.py<br>multi-connection segments"]
+    E["engine/media_engine.py<br>yt-dlp + FFmpeg"]
+  end
+  C --> B
+  P --> B
+  B -- "HTTP/JSON" --> S
+  S --> M
+  G --> M
+  M --> H
+  M --> E
+```
+
+### FAQ
+
+- **The extension says "未連線" (not connected)**: make sure the Divebird desktop app is running (it may be in the system tray) and that the app and the extension use the same port.
+- **A video fails to download**: video sites change often, so update Divebird to the [latest release](https://github.com/acer1204/Divebird/releases/latest), or try another source from the menu.
+- **Security**: the local API listens on `127.0.0.1` only. Requests that carry an `Origin` header are accepted only from browser extensions, so ordinary web pages cannot call it. The cookies stored with a download are deleted once that download finishes; your browser's own cookies are not touched.
+
+### Limitations
+
+- DRM-protected streams (such as Widevine), like those on Netflix, Disney+ and Spotify, cannot be downloaded.
+- Live streams are not supported yet.
+- The user interface is currently available only in Traditional Chinese.
+- Respect each site's terms of service and copyright law, and only download content you have the right to keep.
+
+### License
+
+Divebird is released under the [MIT License](LICENSE). The prebuilt packages also bundle third-party components under their own licenses, including [Python](https://www.python.org/) (PSF License), [Qt / PySide6](https://www.qt.io/qt-for-python) (LGPLv3), [yt-dlp](https://github.com/yt-dlp/yt-dlp) (Unlicense), [FFmpeg](https://ffmpeg.org/) (GPL, obtained via [imageio-ffmpeg](https://github.com/imageio/imageio-ffmpeg)), [Deno](https://deno.com/) (MIT) and [Requests](https://github.com/psf/requests) (Apache 2.0).
