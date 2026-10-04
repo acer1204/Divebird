@@ -15,6 +15,8 @@ jobs:
           # 用較舊的 Ubuntu 建置，產出的執行檔可在較多 Linux 發行版上執行
           - os: ubuntu-22.04
     runs-on: ${{ matrix.os }}
+    env:
+      PYTHONUTF8: "1"     # 測試與腳本輸出含中文；GitHub 的 Windows 主機主控台預設是 cp1252
     steps:
       - uses: actions/checkout@v4
 

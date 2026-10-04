@@ -174,6 +174,7 @@ def find_chromium() -> str | None:
 
 
 def main():
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")   # 結果含中文，非 UTF-8 主控台也要能輸出
     ap = argparse.ArgumentParser()
     ap.add_argument("--chromium", default=None)
     ap.add_argument("--youtube", action="store_true", help="額外測試真實 YouTube 頁面（需要網路）")

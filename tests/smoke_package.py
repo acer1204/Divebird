@@ -56,6 +56,8 @@ def is_mp4(p: Path, wait: float = 0) -> bool:
 
 
 def main() -> int:
+    # 結果含中文：在 cp1252 等非 UTF-8 主控台（例如 GitHub 的 Windows 主機）也要能輸出
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     app = Path(sys.argv[1]).resolve()
     work = Path(tempfile.mkdtemp(prefix="divebird-smoke-"))
     import imageio_ffmpeg
