@@ -18,7 +18,7 @@ jobs:
     env:
       PYTHONUTF8: "1"     # 測試與腳本輸出含中文；GitHub 的 Windows 主機主控台預設是 cp1252
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Linux 系統函式庫（Qt xcb 外掛所需，會一併打包）
         if: runner.os == 'Linux'
@@ -48,9 +48,10 @@ jobs:
           ./scripts/build.sh
           .venv/bin/python tests/smoke_package.py dist/Divebird/Divebird
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Divebird-${{ runner.os }}
+          if-no-files-found: error   # 打包沒有產出時讓 CI 失敗，不要只發警告
           path: |
             dist/*.zip
             dist/*.tar.gz
@@ -63,7 +64,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
@@ -72,7 +73,7 @@ jobs:
           cd artifacts
           sha256sum *.zip *.tar.gz > SHA256SUMS.txt
           cat SHA256SUMS.txt
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: |
             artifacts/*.zip
