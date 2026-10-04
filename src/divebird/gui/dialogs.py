@@ -1,0 +1,454 @@
+from __future__ import annotations
+
+import copy
+import os
+import threading
+
+import requests
+from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtGui import QFont, QPixmap
+from PySide6.QtWidgets import (
+    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
+    QLabel, QLineEdit, QPlainTextEdit, QPushButton, QSizePolicy, QSpinBox, QVBoxLayout,
+)
+
+from .. import __version__, autostart
+from ..config import Settings
+from ..engine.http_engine import make_session, probe
+from ..engine.media_engine import AUDIO_BEST, AUDIO_MP3, extract_info, format_choices
+from ..engine.tools import deno_path, ffmpeg_path
+from ..models import Kind, Task
+from ..utils import human_size, human_time, sanitize_filename
+from . import icons
+
+MEDIA_TYPES = ("mpegurl", "dash+xml")
+
+
+class _Signals(QObject):
+    http_ready = Signal(object)
+    media_ready = Signal(object)
+    failed = Signal(str)
+    thumb_ready = Signal(bytes)
+
+
+def _elide_middle(text: str, n: int = 90) -> str:
+    return text if len(text) <= n else text[: n // 2 - 2] + " … " + text[-n // 2 + 2:]
+
+
+class NewDownloadDialog(QDialog):
+    """收到新下載時的確認對話框：顯示檔案資訊、選擇畫質與儲存位置。"""
+
+    submitted = Signal(object, bool)      # (Task, 立即開始)
+
+    def __init__(self, task: Task, settings: Settings, parent=None):
+        super().__init__(parent)
+        self.task = task
+        self.settings = settings
+        self._closed = False
+        self.setWindowTitle("新增下載")
+        self.setWindowIcon(icons.app_icon())
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self.setMinimumWidth(620)
+
+        self.sig = _Signals()
+        self.sig.http_ready.connect(self._on_http)
+        self.sig.media_ready.connect(self._on_media)
+        self.sig.failed.connect(self._on_failed)
+        self.sig.thumb_ready.connect(self._on_thumb)
+
+        root = QVBoxLayout(self)
+        root.setSpacing(12)
+
+        # 標頭
+        head = QHBoxLayout()
+        logo = QLabel()
+        logo.setPixmap(icons.app_icon().pixmap(40, 40))
+        head.addWidget(logo, 0, Qt.AlignmentFlag.AlignTop)
+        title_box = QVBoxLayout()
+        title = QLabel("下載檔案資訊")
+        f = title.font()
+        f.setPointSizeF(f.pointSizeF() + 3)
+        f.setWeight(QFont.Weight.DemiBold)
+        title.setFont(f)
+        self.url_label = QLabel(_elide_middle(task.url))
+        self.url_label.setToolTip(task.url)
+        self.url_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.url_label.setStyleSheet("color: palette(placeholder-text);")
+        title_box.addWidget(title)
+        title_box.addWidget(self.url_label)
+        head.addLayout(title_box, 1)
+        root.addLayout(head)
+
+        body = QHBoxLayout()
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form.setHorizontalSpacing(10)
+        form.setVerticalSpacing(8)
+
+        self.name_edit = QLineEdit(task.filename)
+        self.name_edit.setPlaceholderText("解析中…")
+        form.addRow("檔案名稱", self.name_edit)
+
+        self.quality = QComboBox()
+        self.quality.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.quality.currentIndexChanged.connect(self._sync_ext)
+        self.quality_label = QLabel("畫質")
+        form.addRow(self.quality_label, self.quality)
+
+        dir_row = QHBoxLayout()
+        self.dir_edit = QLineEdit(task.save_dir or settings.download_dir)
+        browse = QPushButton("瀏覽…")
+        browse.clicked.connect(self._browse)
+        dir_row.addWidget(self.dir_edit, 1)
+        dir_row.addWidget(browse)
+        form.addRow("儲存至", dir_row)
+
+        self.info_label = QLabel("正在取得檔案資訊…")
+        self.info_label.setWordWrap(True)
+        form.addRow("資訊", self.info_label)
+        body.addLayout(form, 1)
+
+        self.thumb = QLabel()
+        self.thumb.setFixedSize(176, 99)
+        self.thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        dark = self.palette().window().color().lightness() < 128
+        self.thumb.setStyleSheet(f"background: {'#111827' if dark else '#eef2f7'}; border-radius: 8px;")
+        self.thumb.setPixmap(icons.icon("video", "#94a3b8").pixmap(36, 36))
+        body.addWidget(self.thumb, 0, Qt.AlignmentFlag.AlignTop)
+        root.addLayout(body)
+
+        self.skip_box = QCheckBox("不再顯示此視窗，直接開始下載（可在設定中更改）")
+        root.addWidget(self.skip_box)
+
+        buttons = QDialogButtonBox()
+        self.start_btn = buttons.addButton("開始下載", QDialogButtonBox.ButtonRole.AcceptRole)
+        self.later_btn = buttons.addButton("稍後下載", QDialogButtonBox.ButtonRole.ActionRole)
+        cancel = buttons.addButton("取消", QDialogButtonBox.ButtonRole.RejectRole)
+        self.start_btn.setDefault(True)
+        self.start_btn.setIcon(icons.icon("downloading", "#ffffff"))
+        self.start_btn.setObjectName("primary")
+        self.start_btn.clicked.connect(lambda: self._submit(True))
+        self.later_btn.clicked.connect(lambda: self._submit(False))
+        cancel.clicked.connect(self.reject)
+        root.addWidget(buttons)
+
+        self._set_media_mode(task.kind == Kind.MEDIA)
+        self._analyze()
+
+    # ---------------------------------------------------------------- 介面
+    def _set_media_mode(self, media: bool) -> None:
+        self.quality.setVisible(media)
+        self.quality_label.setVisible(media)
+        self.thumb.setVisible(media)
+
+    def _browse(self):
+        d = QFileDialog.getExistingDirectory(self, "選擇儲存資料夾", self.dir_edit.text())
+        if d:
+            self.dir_edit.setText(d)
+
+    def _sync_ext(self):
+        fmt = self.quality.currentData()
+        if fmt is None or self.task.kind != Kind.MEDIA:
+            return
+        ext = ".mp3" if fmt == AUDIO_MP3 else ".m4a" if fmt == AUDIO_BEST else "." + self.settings.merge_format
+        stem = os.path.splitext(self.name_edit.text())[0] if self.name_edit.text() else ""
+        if stem:
+            self.name_edit.setText(stem + ext)
+
+    def _submit(self, start: bool):
+        t = self.task
+        t.filename = sanitize_filename(self.name_edit.text()) if self.name_edit.text().strip() else ""
+        t.save_dir = self.dir_edit.text().strip() or self.settings.download_dir
+        if t.kind == Kind.MEDIA and self.quality.currentData():
+            t.media_format = self.quality.currentData()
+        if self.skip_box.isChecked():
+            self.settings.show_dialog = False
+            self.settings.save()
+        self.submitted.emit(t, start)
+        self.accept()
+
+    def done(self, r):
+        self._closed = True
+        super().done(r)
+
+    # ---------------------------------------------------------------- 背景解析
+    def _analyze(self):
+        task = copy.copy(self.task)
+        settings = self.settings
+        sig = self.sig
+
+        def work():
+            try:
+                if task.kind == Kind.MEDIA:
+                    sig.media_ready.emit(extract_info(task, settings))
+                    return
+                session = make_session(task)
+                try:
+                    res = probe(session, task.url)
+                finally:
+                    session.close()
+                if any(m in res.content_type.lower() for m in MEDIA_TYPES):
+                    task.kind = Kind.MEDIA
+                    sig.http_ready.emit(res)
+                    sig.media_ready.emit(extract_info(task, settings))
+                else:
+                    sig.http_ready.emit(res)
+            except Exception as e:  # noqa: BLE001
+                msg = str(e)
+                if isinstance(e, requests.HTTPError) and e.response is not None:
+                    msg = f"HTTP {e.response.status_code}"
+                sig.failed.emit(msg)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_http(self, res):
+        if self._closed:
+            return
+        if any(m in res.content_type.lower() for m in MEDIA_TYPES):
+            self.task.kind = Kind.MEDIA
+            self._set_media_mode(True)
+            self.info_label.setText("偵測到串流播放清單，正在解析影片…")
+            return
+        if not self.name_edit.text():
+            self.name_edit.setText(res.filename)
+        size = human_size(res.total) if res.total > 0 else "未知大小"
+        resume = "支援續傳、多連線加速" if res.resumable else "不支援續傳（單一連線）"
+        ctype = res.content_type.split(";")[0] or "未知類型"
+        self.info_label.setText(f"<b>{size}</b>　·　{ctype}<br>{resume}")
+
+    def _on_media(self, info: dict):
+        if self._closed:
+            return
+        self._set_media_mode(True)
+        title = info.get("title") or ""
+        if not self.name_edit.text():
+            # 直接的 m3u8/mpd 網址 yt-dlp 只能拿到無意義的檔名，優先使用網頁標題
+            generic = info.get("extractor_key") == "Generic"
+            name = (self.task.title if generic and self.task.title else title) or "video"
+            self.name_edit.setText(sanitize_filename(name) + "." + self.settings.merge_format)
+        self.quality.blockSignals(True)
+        self.quality.clear()
+        for label, fmt in format_choices(info):
+            self.quality.addItem(label, fmt)
+        # 套用設定中的預設畫質
+        idx = self.quality.findData(self.settings.media_format)
+        self.quality.setCurrentIndex(max(0, idx))
+        self.quality.blockSignals(False)
+        self._sync_ext()
+
+        parts = []
+        if info.get("extractor_key") and info["extractor_key"] != "Generic":
+            parts.append(info["extractor_key"])
+        if info.get("duration"):
+            parts.append(f"長度 {human_time(info['duration'])}")
+        if info.get("uploader"):
+            parts.append(info["uploader"])
+        self.info_label.setText(f"<b>{title}</b><br>{'　·　'.join(parts)}" if title else "　·　".join(parts))
+        thumb = info.get("thumbnail")
+        if thumb:
+            def fetch():
+                try:
+                    r = requests.get(thumb, timeout=10, headers={"User-Agent": self.task.user_agent or "Mozilla/5.0"})
+                    if r.ok:
+                        self.sig.thumb_ready.emit(r.content)
+                except requests.RequestException:
+                    pass
+            threading.Thread(target=fetch, daemon=True).start()
+
+    def _on_thumb(self, data: bytes):
+        if self._closed:
+            return
+        pm = QPixmap()
+        if pm.loadFromData(data):
+            self.thumb.setPixmap(pm.scaled(self.thumb.size(), Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                           Qt.TransformationMode.SmoothTransformation)
+                                 .copy(0, 0, self.thumb.width(), self.thumb.height()))
+
+    def _on_failed(self, msg: str):
+        if self._closed:
+            return
+        self.info_label.setText(f"<span style='color:#dc2626'>無法取得檔案資訊：{msg}</span>"
+                                "<br>仍可加入下載，稍後重試。")
+        if not self.name_edit.text():
+            self.name_edit.setPlaceholderText("（自動）")
+        if self.task.kind == Kind.MEDIA and self.quality.count() == 0:
+            self.quality.addItem("最佳品質（自動）", self.settings.media_format)
+
+
+class AddUrlDialog(QDialog):
+    def __init__(self, parent=None, initial: str = ""):
+        super().__init__(parent)
+        self.setWindowTitle("新增網址")
+        self.setMinimumWidth(560)
+        lay = QVBoxLayout(self)
+        lay.addWidget(QLabel("輸入下載網址（一行一個，可為檔案連結、m3u8 / mpd 串流或影音網站網址）："))
+        self.edit = QPlainTextEdit(initial)
+        self.edit.setFixedHeight(110)
+        lay.addWidget(self.edit)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        bb.button(QDialogButtonBox.StandardButton.Ok).setText("下一步")
+        bb.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+    def urls(self) -> list[str]:
+        return [u.strip() for u in self.edit.toPlainText().splitlines()
+                if u.strip().lower().startswith(("http://", "https://"))]
+
+
+class DeleteDialog(QDialog):
+    def __init__(self, count: int, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("刪除下載")
+        lay = QVBoxLayout(self)
+        lay.addWidget(QLabel(f"確定要從清單中移除 {count} 個項目？"))
+        self.delete_files = QCheckBox("同時刪除已下載的檔案")
+        lay.addWidget(self.delete_files)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Yes | QDialogButtonBox.StandardButton.No)
+        bb.button(QDialogButtonBox.StandardButton.Yes).setText("刪除")
+        bb.button(QDialogButtonBox.StandardButton.No).setText("取消")
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+
+class SettingsDialog(QDialog):
+    def __init__(self, settings: Settings, parent=None):
+        super().__init__(parent)
+        self.settings = settings
+        self.setWindowTitle("設定")
+        self.setMinimumWidth(560)
+        lay = QVBoxLayout(self)
+
+        g1 = QGroupBox("下載")
+        f1 = QFormLayout(g1)
+        row = QHBoxLayout()
+        self.dir_edit = QLineEdit(settings.download_dir)
+        b = QPushButton("瀏覽…")
+        b.clicked.connect(lambda: self._pick_dir(self.dir_edit))
+        row.addWidget(self.dir_edit, 1)
+        row.addWidget(b)
+        f1.addRow("預設下載資料夾", row)
+        self.concurrent = self._spin(1, 16, settings.max_concurrent)
+        f1.addRow("同時下載任務數", self.concurrent)
+        self.connections = self._spin(1, 32, settings.connections)
+        f1.addRow("每個檔案的連線數", self.connections)
+        self.speed = self._spin(0, 10_000_000, settings.speed_limit_kbps, " KB/s")
+        self.speed.setSpecialValueText("不限速")
+        f1.addRow("全域限速", self.speed)
+        lay.addWidget(g1)
+
+        g2 = QGroupBox("瀏覽器整合")
+        f2 = QFormLayout(g2)
+        self.port = self._spin(1024, 65535, settings.port)
+        self.port.setGroupSeparatorShown(False)
+        f2.addRow("本機 API 埠號", self.port)
+        hint = QLabel("需與 Chrome 擴充功能設定的埠號相同（預設 17890）。")
+        hint.setStyleSheet("color: palette(placeholder-text);")
+        f2.addRow("", hint)
+        self.show_dialog = QCheckBox("收到瀏覽器傳來的下載時，顯示確認視窗")
+        self.show_dialog.setChecked(settings.show_dialog)
+        f2.addRow("", self.show_dialog)
+        lay.addWidget(g2)
+
+        g3 = QGroupBox("影音（yt-dlp）")
+        f3 = QFormLayout(g3)
+        self.quality = QComboBox()
+        for label, fmt in [("最佳畫質", "bv*+ba/b"),
+                           ("最高 2160p", "bv*[height<=2160]+ba/b[height<=2160]/bv*+ba/b"),
+                           ("最高 1080p", "bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b"),
+                           ("最高 720p", "bv*[height<=720]+ba/b[height<=720]/bv*+ba/b"),
+                           ("最高 480p", "bv*[height<=480]+ba/b[height<=480]/bv*+ba/b")]:
+            self.quality.addItem(label, fmt)
+        self.quality.setCurrentIndex(max(0, self.quality.findData(settings.media_format)))
+        f3.addRow("預設畫質", self.quality)
+        self.merge = QComboBox()
+        self.merge.addItems(["mp4", "mkv"])
+        self.merge.setCurrentText(settings.merge_format)
+        f3.addRow("影音合併格式", self.merge)
+        row = QHBoxLayout()
+        self.ffmpeg = QLineEdit(settings.ffmpeg_path)
+        self.ffmpeg.setPlaceholderText("留白 = 使用內附 ffmpeg")
+        b2 = QPushButton("瀏覽…")
+        b2.clicked.connect(self._pick_ffmpeg)
+        row.addWidget(self.ffmpeg, 1)
+        row.addWidget(b2)
+        f3.addRow("ffmpeg 路徑", row)
+        lay.addWidget(g3)
+
+        g4 = QGroupBox("介面")
+        v4 = QVBoxLayout(g4)
+        self.tray = QCheckBox("關閉視窗時縮小到系統匣，繼續在背景下載")
+        self.tray.setChecked(settings.minimize_to_tray)
+        self.notify = QCheckBox("下載完成時顯示通知")
+        self.notify.setChecked(settings.notify_on_complete)
+        self.autostart = QCheckBox("登入系統時自動啟動（縮小到系統匣）")
+        self.autostart.setChecked(autostart.is_enabled())
+        v4.addWidget(self.tray)
+        v4.addWidget(self.notify)
+        v4.addWidget(self.autostart)
+        lay.addWidget(g4)
+
+        about = QLabel(self._about_text())
+        about.setStyleSheet("color: palette(placeholder-text);")
+        about.setWordWrap(True)
+        lay.addWidget(about)
+
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        bb.button(QDialogButtonBox.StandardButton.Save).setText("儲存")
+        bb.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+        bb.accepted.connect(self._save)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+    @staticmethod
+    def _spin(lo, hi, val, suffix=""):
+        s = QSpinBox()
+        s.setRange(lo, hi)
+        s.setValue(int(val))
+        if suffix:
+            s.setSuffix(suffix)
+        return s
+
+    def _pick_dir(self, edit: QLineEdit):
+        d = QFileDialog.getExistingDirectory(self, "選擇資料夾", edit.text())
+        if d:
+            edit.setText(d)
+
+    def _pick_ffmpeg(self):
+        f, _ = QFileDialog.getOpenFileName(self, "選擇 ffmpeg 執行檔")
+        if f:
+            self.ffmpeg.setText(f)
+
+    @staticmethod
+    def _about_text() -> str:
+        try:
+            from yt_dlp.version import __version__ as ytv
+        except Exception:  # noqa: BLE001
+            ytv = "?"
+        ok = lambda p: "✓ 內附" if p else "✗ 找不到"  # noqa: E731
+        return (f"Divebird {__version__}　·　yt-dlp {ytv}　·　ffmpeg {ok(ffmpeg_path())}　·　"
+                f"deno {ok(deno_path())}")
+
+    def _save(self):
+        s = self.settings
+        s.download_dir = self.dir_edit.text().strip() or s.download_dir
+        s.max_concurrent = self.concurrent.value()
+        s.connections = self.connections.value()
+        s.speed_limit_kbps = self.speed.value()
+        s.port = self.port.value()
+        s.show_dialog = self.show_dialog.isChecked()
+        s.media_format = self.quality.currentData()
+        s.merge_format = self.merge.currentText()
+        s.ffmpeg_path = self.ffmpeg.text().strip()
+        s.minimize_to_tray = self.tray.isChecked()
+        s.notify_on_complete = self.notify.isChecked()
+        s.save()
+        if self.autostart.isChecked() != autostart.is_enabled():
+            try:
+                autostart.set_enabled(self.autostart.isChecked())
+            except OSError:
+                pass
+        self.accept()

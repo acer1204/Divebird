@@ -1,0 +1,12 @@
+{
+  "appName": {
+    "message": "Divebird – Video Downloader",
+    "description": "Extension name shown in Chrome"
+  },
+  "appShortName": {
+    "message": "Divebird"
+  },
+  "appDescription": {
+    "message": "Adds a “Download this video” button to web videos and catches HLS/DASH streams, then hands them to the free Divebird desktop app."
+  }
+}

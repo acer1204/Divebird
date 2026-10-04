@@ -1,0 +1,36 @@
+[project]
+name = "divebird"
+version = "1.0.0"
+description = "跨平台下載管理員（類 IDM），支援多連線分段下載、續傳與 Chrome 擴充功能影片偵測"
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "PySide6-Essentials>=6.7",
+    "requests>=2.31",
+    "yt-dlp[default]>=2025.11.12",
+    "imageio-ffmpeg>=0.5",
+    "deno>=2.4",
+]
+
+[project.scripts]
+divebird = "divebird.__main__:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pyinstaller>=6.10",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/divebird"]
+
+[tool.uv]
+# 只使用 uv 自行管理（下載到專案內 .runtime/python）的 Python，不依賴系統安裝的 Python
+python-preference = "only-managed"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

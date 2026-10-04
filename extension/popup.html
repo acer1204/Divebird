@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Divebird</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #0f172a; --muted: #64748b; --line: #e2e8f0; --card: #f8fafc;
+    --hover: #eef2f7; --accent: #2563eb; --accent-fg: #fff; --ok: #16a34a; --err: #dc2626;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111827; --fg: #e5e7eb; --muted: #9ca3af; --line: #1f2937; --card: #0b1220;
+            --hover: #1f2937; --accent: #3b82f6; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; width: 380px; background: var(--bg); color: var(--fg);
+         font: 13px/1.45 system-ui, "Segoe UI", "Microsoft JhengHei", "Noto Sans CJK TC", sans-serif; }
+  header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  header img { width: 28px; height: 28px; }
+  header h1 { font-size: 15px; margin: 0; flex: 1; }
+  .status { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--ok); } .dot.err { background: var(--err); }
+  section { padding: 10px 14px; }
+  h2 { font-size: 12px; font-weight: 600; color: var(--muted); margin: 2px 0 8px; }
+  .list { display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow-y: auto; }
+  .item { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 8px; background: var(--card); }
+  .item:hover { background: var(--hover); }
+  .tag { flex: none; min-width: 42px; text-align: center; font-size: 11px; font-weight: 700; color: #fff;
+         padding: 2px 5px; border-radius: 5px; background: #2563eb; }
+  .tag.hls { background: #7c3aed; } .tag.dash { background: #db2777; } .tag.audio { background: #059669; }
+  .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .size { flex: none; color: var(--muted); font-size: 12px; }
+  button { font: inherit; cursor: pointer; border-radius: 7px; border: 1px solid var(--line);
+           background: var(--card); color: var(--fg); padding: 4px 10px; }
+  button:hover { background: var(--hover); }
+  button.primary { background: var(--accent); color: var(--accent-fg); border-color: transparent; font-weight: 600; }
+  button.primary:hover { filter: brightness(1.08); }
+  button:disabled { opacity: .45; cursor: not-allowed; filter: none; }
+  .empty { color: var(--muted); padding: 8px 2px; }
+  .page-btn { width: 100%; margin-top: 8px; padding: 8px; }
+  .settings { border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
+  label { display: flex; align-items: center; gap: 8px; }
+  input[type=number] { width: 90px; padding: 3px 6px; border-radius: 6px; border: 1px solid var(--line);
+                       background: var(--card); color: var(--fg); font: inherit; }
+  .hint { color: var(--muted); font-size: 12px; }
+  #msg { min-height: 18px; font-size: 12px; padding: 0 14px 10px; }
+  #msg.ok { color: var(--ok); } #msg.err { color: var(--err); }
+</style>
+</head>
+<body>
+<header>
+  <img src="icons/icon48.png" alt="">
+  <h1>Divebird</h1>
+  <div class="status"><span class="dot" id="dot"></span><span id="status">檢查中…</span></div>
+</header>
+<section>
+  <h2 id="media-title">此分頁偵測到的影音</h2>
+  <div class="list" id="list"></div>
+  <button class="page-btn primary" id="page-btn">以 yt-dlp 解析此頁面的影片</button>
+</section>
+<div id="msg"></div>
+<section class="settings">
+  <label><input type="checkbox" id="floatingButton"> 在網頁影片上顯示「下載此影片」按鈕</label>
+  <label><input type="checkbox" id="interceptDownloads"> 攔截瀏覽器下載，改用 Divebird 多連線下載</label>
+  <div class="hint">攔截時按住 Alt 點連結可略過，由瀏覽器自行下載。</div>
+  <label>Divebird 連接埠 <input type="number" id="port" min="1024" max="65535"></label>
+</section>
+<script src="popup.js"></script>
+</body>
+</html>
