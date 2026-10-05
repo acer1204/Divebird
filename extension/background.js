@@ -349,29 +349,40 @@ function notifyTab(tab, message) {
 }
 
 // ------------------------------------------------------------------ 攔截瀏覽器下載
+// 在 onDeterminingFilename（而不是 onCreated）攔截：瀏覽器會等這裡回覆之後，才決定存檔位置、
+// 跳出「另存新檔」視窗（右鍵「另存連結為…」或開啟「下載前詢問儲存位置」時）。要攔截的下載
+// 在這之前就取消，就不會再跳出瀏覽器自己的視窗；不攔截的下載呼叫 suggest() 讓瀏覽器照常處理。
 let bypassUntil = 0;           // 使用者按住 Alt 點擊時，下一個下載不攔截
 const bypassUrls = new Set();  // 交還給瀏覽器的下載，避免再次攔截
 
-chrome.downloads.onCreated.addListener(async (item) => {
+async function shouldIntercept(item) {
   const url = item.finalUrl || item.url;
   if (bypassUrls.has(url)) {
     bypassUrls.delete(url);
-    return;
+    return false;
   }
   if (Date.now() < bypassUntil) {
     bypassUntil = 0;
+    return false;
+  }
+  if (!/^https?:/i.test(url) || item.state !== "in_progress" || item.byExtensionId) return false;
+  const s = await getSettings();
+  if (!s.interceptDownloads) return false;
+  if (s.minInterceptKB > 0 && item.totalBytes > 0 && item.totalBytes < s.minInterceptKB * 1024) return false;
+  return ping(); // 桌面程式沒在執行 → 照常由瀏覽器下載
+}
+
+async function interceptDownload(item, suggest) {
+  if (!(await shouldIntercept(item))) {
+    suggest();
     return;
   }
-  if (!/^https?:/i.test(url) || item.state !== "in_progress" || item.byExtensionId) return;
-  const s = await getSettings();
-  if (!s.interceptDownloads) return;
-  if (s.minInterceptKB > 0 && item.totalBytes > 0 && item.totalBytes < s.minInterceptKB * 1024) return;
-  if (!(await ping())) return; // 桌面程式沒在執行 → 照常由瀏覽器下載
-
+  const url = item.finalUrl || item.url;
   try {
     await chrome.downloads.cancel(item.id);
     await chrome.downloads.erase({ id: item.id });
   } catch {
+    suggest();
     return;
   }
   try {
@@ -384,6 +395,11 @@ chrome.downloads.onCreated.addListener(async (item) => {
     bypassUrls.add(url);
     chrome.downloads.download({ url });
   }
+}
+
+chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
+  interceptDownload(item, suggest).catch(() => suggest());
+  return true; // 非同步回覆：瀏覽器會等 suggest() 或下載被取消
 });
 
 // ------------------------------------------------------------------ 提供偵測到的影音給 AI 工具（MCP）

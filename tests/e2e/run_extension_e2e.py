@@ -253,6 +253,10 @@ def main():
 
     chromium = args.chromium or find_chromium()
     print("Chromium:", chromium)
+    prefs = work / "profile" / "Default" / "Preferences"      # 瀏覽器自己下載時存到臨時資料夾，不詢問位置
+    prefs.parent.mkdir(parents=True)
+    prefs.write_text(json.dumps({"download": {"default_directory": str(work / "browser-downloads"),
+                                              "prompt_for_download": False}}), encoding="utf-8")
     with sync_playwright() as p:
         ctx = p.chromium.launch_persistent_context(
             str(work / "profile"), headless=False, executable_path=chromium,
@@ -283,11 +287,19 @@ def main():
         print("  多連線分段請求數：", len(ranged))
 
         # ---------------- 2. 下載攔截：點一般下載連結
-        with page.expect_download(timeout=5000):
-            page.click("#dl")
-        page.wait_for_timeout(500)
+        # Playwright 預設由 DevTools 接管下載，不會經過擴充功能的 onDeterminingFilename；改回瀏覽器原本的流程
+        # （存到臨時的 browser-downloads，不詢問位置）。攔截要在瀏覽器決定存檔位置之前完成，
+        # 「另存新檔」視窗才不會跳出來：記錄下載項目的變化，確認從來沒有出現檔名（filename）。
+        ctx.new_cdp_session(page).send("Browser.setDownloadBehavior", {"behavior": "default"})
+        sw.evaluate("() => { self.__changes = []; chrome.downloads.onChanged.addListener(d => self.__changes.push(d)); }")
+        page.click("#dl")
         ok = wait_file(dl_dir / "archive.zip")
-        results["攔截瀏覽器下載"] = ok and sha(dl_dir / "archive.zip") == sha(work / "site/media/archive.zip")
+        page.wait_for_timeout(500)
+        decided = [c for c in sw.evaluate("() => self.__changes") if "filename" in c]
+        by_browser = list((work / "browser-downloads").glob("*"))
+        print("  瀏覽器決定存檔位置：", decided or "無", "｜瀏覽器自己下載：", [f.name for f in by_browser] or "無")
+        results["攔截瀏覽器下載（不跳出另存新檔）"] = (ok and sha(dl_dir / "archive.zip") == sha(work / "site/media/archive.zip")
+                                       and not decided and not by_browser)
 
         # ---------------- 3. HLS：嗅探串流 → 選單 → 選 HLS
         page2 = ctx.new_page()
