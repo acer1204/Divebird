@@ -21,9 +21,6 @@ from ..models import Kind, Task
 from ..utils import human_size, human_time, sanitize_filename
 from . import icons
 
-MEDIA_TYPES = ("mpegurl", "dash+xml")
-
-
 class _Signals(QObject):
     http_ready = Signal(object)
     media_ready = Signal(object)
@@ -188,7 +185,7 @@ class NewDownloadDialog(QDialog):
                     res = probe(session, task.url)
                 finally:
                     session.close()
-                if any(m in res.content_type.lower() for m in MEDIA_TYPES):
+                if res.manifest:
                     task.kind = Kind.MEDIA
                     sig.http_ready.emit(res)
                     sig.media_ready.emit(extract_info(task, settings))
@@ -205,7 +202,7 @@ class NewDownloadDialog(QDialog):
     def _on_http(self, res):
         if self._closed:
             return
-        if any(m in res.content_type.lower() for m in MEDIA_TYPES):
+        if res.manifest:
             self.task.kind = Kind.MEDIA
             self._set_media_mode(True)
             self.info_label.setText("偵測到串流播放清單，正在解析影片…")

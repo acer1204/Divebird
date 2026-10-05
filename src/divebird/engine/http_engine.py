@@ -46,8 +46,17 @@ STATE_SAVE_INTERVAL = 2.0
 REPORT_INTERVAL = 0.5
 
 
+MANIFEST_TYPES = ("mpegurl", "dash+xml")     # HLS / DASH 播放清單的 Content-Type 關鍵字
+_SNIFF_TYPES = ("", "text/plain", "application/octet-stream", "binary/octet-stream", "application/xml", "text/xml")
+_SNIFF_MAX_SIZE = 10 * 1024 * 1024
+
+
 class DownloadError(Exception):
     pass
+
+
+class ManifestDetected(DownloadError):
+    """網址其實是 HLS / DASH 串流播放清單：要改用影音引擎（yt-dlp + FFmpeg）下載，才能得到影片。"""
 
 
 @dataclass
@@ -59,6 +68,13 @@ class ProbeResult:
     content_type: str
     etag: str = ""
     last_modified: str = ""
+    manifest: bool = False     # 是串流播放清單（不是一般檔案）
+
+
+def sniff_manifest(head: bytes) -> bool:
+    """依內容開頭判斷是否為 HLS（#EXTM3U）或 DASH（MPD）播放清單。"""
+    start = head.lstrip(b"\xef\xbb\xbf \t\r\n")
+    return start.startswith(b"#EXTM3U") or (b"<MPD" in head and b"urn:mpeg:dash" in head)
 
 
 @dataclass
@@ -162,9 +178,19 @@ def probe(session: requests.Session, url: str) -> ProbeResult:
         content_type = h.get("Content-Type", "")
         name = filename_from_content_disposition(h.get("Content-Disposition")) or filename_from_url(resp.url)
         name = ensure_extension(sanitize_filename(name), content_type)
+        # 沒有 .m3u8 / .mpd 副檔名的串流網址（例如 /master?id=1）：看 Content-Type；
+        # 伺服器只回 text/plain 或 octet-stream 時，再看內容開頭
+        manifest = any(m in content_type.lower() for m in MANIFEST_TYPES)
+        base_type = content_type.split(";")[0].strip().lower()
+        if not manifest and base_type in _SNIFF_TYPES and total < _SNIFF_MAX_SIZE:
+            try:
+                manifest = sniff_manifest(next(resp.iter_content(1024), b""))
+            except (requests.RequestException, OSError):
+                pass
         return ProbeResult(
             final_url=resp.url, total=total, resumable=resumable, filename=name,
             content_type=content_type, etag=h.get("ETag", ""), last_modified=h.get("Last-Modified", ""),
+            manifest=manifest,
         )
     finally:
         resp.close()
@@ -218,6 +244,8 @@ class HttpDownloader:
             info = probe(session, task.url)
             if self.stopped:
                 return False
+            if info.manifest:
+                raise ManifestDetected(info.content_type or "串流播放清單")
             Path(task.save_dir).mkdir(parents=True, exist_ok=True)
             if not task.filename:
                 task.filename = self.reserve_name(Path(task.save_dir) / info.filename).name

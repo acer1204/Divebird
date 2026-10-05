@@ -13,7 +13,7 @@ import requests
 from ..config import Settings, data_dir
 from ..models import Kind, Status, Task
 from ..utils import sanitize_filename
-from .http_engine import DownloadError, HttpDownloader, RateLimiter
+from .http_engine import DownloadError, HttpDownloader, ManifestDetected, RateLimiter
 from .media_engine import MediaDownloader
 
 
@@ -289,6 +289,14 @@ class DownloadManager:
                 finished = True
             elif t.status in Status.ACTIVE:
                 t.status = Status.PAUSED
+        except ManifestDetected:
+            # 網址其實是 HLS / DASH 播放清單（例如沒有副檔名的 /master?id=1）：改用影音引擎重新排入佇列，
+            # 否則只會存下一份文字播放清單
+            if t.status in Status.ACTIVE:
+                t.kind = Kind.MEDIA
+                if not t.filename and t.title:
+                    t.filename = sanitize_filename(t.title) + "." + (self.settings.merge_format or "mp4")
+                t.status = Status.QUEUED
         except Exception as e:  # noqa: BLE001
             if runner.stopped:
                 if t.status in Status.ACTIVE:

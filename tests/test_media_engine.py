@@ -1,15 +1,17 @@
 """以 ffmpeg 產生本機 HLS 串流，驗證 yt-dlp 下載流程與內附工具。"""
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
 
 from divebird.config import Settings
+from divebird.engine.manager import DownloadManager
 from divebird.engine.media_engine import (
     MediaDownloader, extract_info, format_choices, is_manifest_url, is_media_site,
 )
 from divebird.engine.tools import deno_path, ffmpeg_path
-from divebird.models import Kind, Task
+from divebird.models import Kind, Status, Task
 
 
 def test_bundled_tools_found():
@@ -76,3 +78,26 @@ def test_hls_download(hls_server, tmp_path):
     probe = subprocess.run([ffmpeg_path(), "-hide_banner", "-i", str(result)], capture_output=True, text=True,
                            encoding="utf-8", errors="replace")
     assert "Video: h264" in probe.stderr and "Audio: aac" in probe.stderr
+
+
+def test_extensionless_manifest_url_becomes_video(hls_server, tmp_path):
+    """沒有 .m3u8 副檔名、伺服器也只回 octet-stream 的串流網址（例如 /master?id=1）：
+    即使以一般檔案加入（沒有經過確認視窗），也要改用影音引擎下載成影片，而不是存下文字播放清單。"""
+    hls_server.files["/hls/master"] = hls_server.files["/hls/master.m3u8"]
+    out = tmp_path / "out"
+    mgr = DownloadManager(Settings(download_dir=str(out), connections=4), store=tmp_path / "tasks.json")
+    try:
+        task = mgr.add(Task(url=hls_server.url("/hls/master?id=1"), kind=Kind.HTTP, title="第3集",
+                            save_dir=str(out)))
+        deadline = time.monotonic() + 120
+        while task.status not in (Status.COMPLETED, Status.ERROR) and time.monotonic() < deadline:
+            time.sleep(0.2)
+        assert task.status == Status.COMPLETED, task.error
+        assert task.kind == Kind.MEDIA
+        result = out / task.filename
+        assert task.filename == "第3集.mp4" and result.exists()
+        probe = subprocess.run([ffmpeg_path(), "-hide_banner", "-i", str(result)], capture_output=True, text=True,
+                               encoding="utf-8", errors="replace")
+        assert "Video: h264" in probe.stderr
+    finally:
+        mgr.shutdown()

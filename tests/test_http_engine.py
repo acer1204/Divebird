@@ -1,11 +1,12 @@
 import hashlib
+import os
 import threading
 import time
 
 import pytest
 import requests
 
-from divebird.engine.http_engine import HttpDownloader, MIN_SPLIT
+from divebird.engine.http_engine import HttpDownloader, ManifestDetected, MIN_SPLIT, probe
 from divebird.models import Task
 
 
@@ -138,3 +139,30 @@ def test_stop_returns_immediately_on_stalled_connection(server, tmp_path):
     t0 = time.monotonic()
     dl.stop()
     assert time.monotonic() - t0 < 0.5
+
+
+@pytest.mark.parametrize("body, ctype, expected", [
+    (b"#EXTM3U\n#EXT-X-VERSION:3\n", "application/octet-stream", True),      # 伺服器沒標類型：看內容開頭
+    (b"\xef\xbb\xbf#EXTM3U\n", "text/plain; charset=utf-8", True),
+    (b"<?xml version='1.0'?>\n<MPD xmlns=\"urn:mpeg:dash:schema:mpd:2011\">", "application/xml", True),
+    (b"x", "application/vnd.apple.mpegurl", True),                          # 依 Content-Type
+    (b"x", "application/dash+xml", True),
+    (b"#EXTM3U", "video/mp4", False),                                        # 明確的影片類型：不看內容
+    (b"\x00\x01 not a playlist" * 100, "application/octet-stream", False),
+])
+def test_probe_detects_stream_manifest_without_extension(server, body, ctype, expected):
+    server.files["/stream/master"] = body
+    server.content_types["/stream/master"] = ctype
+    session = requests.Session()
+    try:
+        assert probe(session, server.url("/stream/master?id=1")).manifest is expected
+    finally:
+        session.close()
+
+
+def test_http_engine_hands_manifest_to_media_engine(server, tmp_path):
+    server.files["/stream/master"] = b"#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nindex.m3u8\n"
+    task = make_task(server, "/stream/master", tmp_path)
+    with pytest.raises(ManifestDetected):
+        HttpDownloader(task, connections=2).run()
+    assert not os.listdir(tmp_path), "不能先存下一份文字播放清單"

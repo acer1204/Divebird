@@ -17,6 +17,7 @@ class FileServer:
         self.throttle = 0.0               # 每 64KB 的延遲秒數
         self.slow_ranges_from: int | None = None   # 從此位移開始的 Range 請求額外變慢
         self.content_disposition: str | None = None
+        self.content_types: dict[str, str] = {}     # 個別檔案的 Content-Type（預設 application/octet-stream）
         self.max_conns: int | None = None    # 模擬限制同時連線數的伺服器：超過就回 503
         self.active = 0
         self.requests: list[tuple[str, str | None]] = []
@@ -62,7 +63,7 @@ class FileServer:
                     end = min(end, len(data) - 1)
                     status = 206
                 self.send_response(status)
-                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Type", fs.content_types.get(name, "application/octet-stream"))
                 self.send_header("Content-Length", str(end - start + 1))
                 if fs.supports_range:
                     self.send_header("Accept-Ranges", "bytes")
