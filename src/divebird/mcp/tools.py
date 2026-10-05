@@ -46,6 +46,7 @@ QUALITY_PRESETS = {
     "mp3": AUDIO_MP3,
 }
 _HEIGHT = re.compile(r"(\d{3,4})p(?:\d{2,3})?")      # 1080p、240p、720p60……
+ALLOW_HINT = "（使用者可以在 Divebird「設定 → AI 整合」開放）"     # 附在權限錯誤後，讓模型能告訴使用者怎麼調整
 _CREDENTIAL_HEADERS = {"cookie", "authorization", "proxy-authorization"}
 _DROPPED_HEADERS = {"host", "content-length", "range", "connection", "transfer-encoding", "accept-encoding"}
 
@@ -133,7 +134,7 @@ def _headers(value: Any, allow_credentials: bool) -> dict:
         if lower in _DROPPED_HEADERS:
             continue
         if lower in _CREDENTIAL_HEADERS and not allow_credentials:
-            raise ToolError(f"Divebird 設定不允許 AI 傳入登入資訊（{k}）。請省略這個標頭，"
+            raise ToolError(f"Divebird 設定不允許 AI 傳入登入資訊（{k}）{ALLOW_HINT}。請省略這個標頭，"
                             "或請使用者改用瀏覽器擴充功能的下載按鈕。")
         out[k] = v
     return out
@@ -143,7 +144,8 @@ def _cookies(value: Any, allow: bool) -> list[dict]:
     if not value:
         return []
     if not allow:
-        raise ToolError("Divebird 設定不允許 AI 傳入 Cookie。請省略 cookies，或請使用者改用瀏覽器擴充功能的下載按鈕。")
+        raise ToolError(f"Divebird 設定不允許 AI 傳入 Cookie{ALLOW_HINT}。請省略 cookies，"
+                        "或請使用者改用瀏覽器擴充功能的下載按鈕。")
     if not isinstance(value, list) or len(value) > 200:
         raise ToolError("cookies 必須是最多 200 個物件的陣列。")
     out = []
@@ -233,7 +235,7 @@ class DivebirdTools:
         try:
             check_url(url)
         except BlockedAddress as e:
-            raise ToolError(f"{e}。Divebird 設定不允許 AI 下載內網或本機位址。") from None
+            raise ToolError(f"{e}。Divebird 設定不允許 AI 下載內網或本機位址{ALLOW_HINT}。") from None
         except (OSError, UnicodeError) as e:
             raise ToolError(f"無法解析網址的主機名稱：{e}") from None
 
@@ -373,7 +375,7 @@ class DivebirdTools:
         subdir = _string(args, "subdir", max_len=500)
         if subdir:
             if not s.mcp_allow_subdir:
-                raise ToolError("Divebird 設定不允許 AI 指定子資料夾，請省略 subdir。")
+                raise ToolError(f"Divebird 設定不允許 AI 指定子資料夾{ALLOW_HINT}，請省略 subdir。")
             save_dir = str(_safe_subdir(s.download_dir, subdir))
         return {"filename": _string(args, "filename", max_len=255), "quality": self._quality(args),
                 "save_dir": save_dir, "start": start}
@@ -384,7 +386,7 @@ class DivebirdTools:
         try:
             res = probe(session, task.url, timeout=(5, 10))
         except BlockedAddress as e:
-            raise ToolError(f"{e}。Divebird 設定不允許 AI 下載內網或本機位址。") from None
+            raise ToolError(f"{e}。Divebird 設定不允許 AI 下載內網或本機位址{ALLOW_HINT}。") from None
         except Exception:  # noqa: BLE001 - 探測失敗就照一般檔案處理，下載時會回報真正的錯誤
             return Kind.HTTP
         finally:
@@ -456,7 +458,7 @@ class DivebirdTools:
         if not isinstance(delete_file, bool):
             raise ToolError("delete_file 必須是 true 或 false。")
         if delete_file and not self.settings.mcp_allow_delete:
-            raise ToolError("Divebird 設定不允許 AI 刪除檔案。可以省略 delete_file，只從清單移除。")
+            raise ToolError(f"Divebird 設定不允許 AI 刪除檔案{ALLOW_HINT}。可以省略 delete_file，只從清單移除。")
         with self._lock:
             entry = self._pending.get(task_id)
             if entry and entry["state"] == REJECTED:

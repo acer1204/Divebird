@@ -56,6 +56,15 @@ def hls_server(server, tmp_path):
     return server
 
 
+def test_title_comes_from_video_not_temp_file(tmp_path):
+    """影像與聲音分開下載時，暫存檔名帶有格式代碼（標題.f278.webm）：標題要用影片本身的標題。"""
+    task = Task(url="https://example.com/watch?v=1", kind=Kind.MEDIA, save_dir=str(tmp_path))
+    dl = MediaDownloader(task, Settings(download_dir=str(tmp_path)), on_update=lambda t: None)
+    dl._hook({"status": "downloading", "filename": str(tmp_path / "Me at the zoo.f278.webm"),
+              "downloaded_bytes": 10, "total_bytes": 100, "info_dict": {"title": "Me at the zoo"}})
+    assert task.title == "Me at the zoo"
+
+
 def test_hls_download(hls_server, tmp_path):
     out = tmp_path / "out"
     settings = Settings(download_dir=str(out), connections=4)

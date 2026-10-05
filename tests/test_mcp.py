@@ -287,6 +287,7 @@ def test_private_network_is_blocked_by_default(env, server):
     for tool in ("download", "probe_url"):
         res = c.call(tool, {"url": server.url("/a.bin")})
         assert res["isError"] and "內網" in res["content"][0]["text"]
+        assert "設定 → AI 整合" in res["content"][0]["text"]       # 讓模型能告訴使用者去哪裡開放
     res = c.call("download", {"url": "http://localhost:1/x"})
     assert res["isError"]
 

@@ -281,7 +281,9 @@ class MediaDownloader:
             task.speed = d.get("speed") or 0.0
             task.active_connections = self.settings.connections if d.get("fragment_count") else 1
             if not task.filename and fn:
-                task.title = task.title or Path(fn).stem
+                # 影像與聲音分開下載時暫存檔名帶有格式代碼（標題.f278.webm），優先用影片本身的標題
+                title = (d.get("info_dict") or {}).get("title")
+                task.title = task.title or str(title or Path(fn).stem)[:200]
         elif status == "finished":
             self._done_bytes += d.get("total_bytes") or d.get("downloaded_bytes") or self._cur_downloaded
             self._cur_file, self._cur_downloaded, self._cur_total = None, 0, 0
