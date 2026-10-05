@@ -122,8 +122,14 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if not self._guard():
             return
-        if self.path.split("?")[0] == "/api/ping":
-            self._send(200, {"ok": True, "app": APP_NAME, "version": __version__})
+        path = self.path.split("?")[0]
+        if path == "/api/ping":
+            mcp = self.api.mcp
+            self._send(200, {"ok": True, "app": APP_NAME, "version": __version__,
+                             "share_media": bool(mcp and mcp.share_media())})
+        elif path == "/api/media/requests":
+            mcp = self.api.mcp
+            self._send(200, {"ok": True, "requests": mcp.browser_requests() if mcp else []})
         else:
             self._send(404, {"ok": False, "error": "not found"})
 
@@ -165,6 +171,9 @@ class _Handler(BaseHTTPRequestHandler):
         elif path == "/api/show":
             self.api.on_show()
             self._send(200, {"ok": True})
+        elif path == "/api/media":
+            mcp = self.api.mcp
+            self._send(200, {"ok": True, "requests": mcp.browser_media_update(data) if mcp else []})
         else:
             self._send(404, {"ok": False, "error": "not found"})
 

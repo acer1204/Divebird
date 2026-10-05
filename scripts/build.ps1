@@ -16,6 +16,7 @@ try {
     $Dist = Join-Path $Root "dist\Divebird"
     Copy-Item -Recurse -Force (Join-Path $Root "extension") (Join-Path $Dist "extension")
     Copy-Item -Force (Join-Path $Root "README.md") $Dist
+    Copy-Item -Recurse -Force (Join-Path $Root "skills") (Join-Path $Dist "skills")
 
     $Zip = Join-Path $Root "dist\Divebird-$Version-windows-x64.zip"
     if (Test-Path $Zip) { Remove-Item $Zip }

@@ -129,4 +129,36 @@ TOOL_DEFINITIONS: list[dict] = [
         "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True,
                         "openWorldHint": False},
     },
+    {
+        "name": "list_browser_media",
+        "title": "瀏覽器偵測到的影音",
+        "description": "List videos and streams that Divebird's browser extension detected in the user's open tabs, "
+                       "newest first (only if the user enabled sharing in Divebird). Download one with "
+                       "download_browser_media: the extension adds the page's cookies and Referer itself, so this "
+                       "also works for sites that need a login.",
+        "inputSchema": _schema({
+            "query": {"type": "string", "description": "Optional text to match against page titles or addresses."},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 20, "description": "Number of tabs (default 5)."},
+        }),
+        "annotations": {"readOnlyHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "download_browser_media",
+        "title": "下載瀏覽器偵測到的影音",
+        "description": "Download an item returned by list_browser_media. Returns a task_id at once with status "
+                       "waiting_for_browser; within about 30 seconds the browser extension hands it over with the "
+                       "page's cookies, then it continues like `download`. Poll get_download.",
+        "inputSchema": _schema({
+            "media_id": {"type": "string", "description": "media_id from list_browser_media."},
+            "filename": {"type": "string", "description": "Optional file name; the extension is chosen "
+                                                          "automatically for videos."},
+            "quality": {"type": "string", "description": "Videos only: best, 2160p, 1440p, 1080p, 720p, 480p, "
+                                                         "360p, audio (M4A) or mp3. Default: the user's setting."},
+            "subdir": {"type": "string", "description": "Optional sub-folder inside the user's download folder "
+                                                        "(if the user allowed it)."},
+            "start": {"type": "boolean", "description": "Start now (default) or add paused."},
+        }, ("media_id",)),
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False,
+                        "openWorldHint": True},
+    },
 ]

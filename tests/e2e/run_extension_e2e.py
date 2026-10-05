@@ -8,6 +8,7 @@
 2. 以獨立、乾淨的設定目錄在背景啟動 Divebird（離屏模式、不跳確認視窗）
 3. 啟動載入擴充功能的 Chromium，在影片上移動滑鼠 → 點懸浮按鈕 → 確認 Divebird 下載完成
 4. 測試 HLS 串流選單、以及瀏覽器下載攔截
+5. AI 透過 MCP 挑選擴充功能偵測到的影音，由擴充功能補上 Cookie 送出下載
 截圖輸出到 tests/e2e/out/
 """
 from __future__ import annotations
@@ -164,6 +165,43 @@ def wait_mp4(path: Path, timeout=40) -> bool:
     return False
 
 
+def mcp_call(cfg_dir: Path, name: str, arguments: dict) -> dict:
+    import urllib.request
+
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                       "params": {"name": name, "arguments": arguments}}).encode()
+    req = urllib.request.Request(f"http://127.0.0.1:{API_PORT}/mcp", data=body, method="POST", headers={
+        "Content-Type": "application/json", "Accept": "application/json, text/event-stream",
+        "MCP-Protocol-Version": "2025-11-25",
+        "Authorization": f"Bearer {(cfg_dir / 'mcp-token').read_text(encoding='utf-8').strip()}"})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        return json.loads(r.read())["result"]
+
+
+def mcp_browser_media(cfg_dir: Path, work: Path) -> bool:
+    """播放中的 sample.mp4 應出現在 list_browser_media；指定下載後由擴充功能補上資料送出（最多約 30 秒）。"""
+    media_id, deadline = None, time.time() + 45
+    while not media_id and time.time() < deadline:
+        tabs = mcp_call(cfg_dir, "list_browser_media", {"query": "測試影片頁"})["structuredContent"]["tabs"]
+        found = [m for t in tabs for m in t["media"] if m["name"] == "sample.mp4"]
+        media_id = found[0]["media_id"] if found else None
+        if not media_id:
+            time.sleep(1)
+    print("  瀏覽器影音：", media_id)
+    if not media_id:
+        return False
+    started = mcp_call(cfg_dir, "download_browser_media", {"media_id": media_id, "filename": "AI 下載的影片"})
+    task_id = started["structuredContent"]["task_id"]
+    status, t0 = {}, time.time()
+    while time.time() - t0 < 120:
+        status = mcp_call(cfg_dir, "get_download", {"task_id": task_id, "wait_seconds": 10})["structuredContent"]
+        if status["status"] in ("completed", "error"):
+            break
+    print(f"  MCP 下載：{status.get('status')}，{time.time() - t0:.0f} 秒，{status.get('filename')}")
+    return (status.get("status") == "completed" and status.get("filename") == "AI 下載的影片.mp4"
+            and sha(Path(status["path"])) == sha(work / "site/media/sample.mp4"))
+
+
 def find_chromium() -> str | None:
     base = Path(os.environ.get("LOCALAPPDATA", Path.home() / ".cache")) / "ms-playwright"
     if not base.exists():
@@ -197,6 +235,7 @@ def main():
     dl_dir = work / "downloads"
     (cfg_dir / "settings.json").write_text(json.dumps({
         "download_dir": str(dl_dir), "port": API_PORT, "show_dialog": False, "minimize_to_tray": False,
+        "mcp_enabled": True, "mcp_confirm": "never", "mcp_allow_private": True, "mcp_share_browser_media": True,
     }), encoding="utf-8")
     env = dict(os.environ, APPDATA=str(appdata), XDG_CONFIG_HOME=str(appdata), QT_QPA_PLATFORM="offscreen")
     cmd = [str(Path(args.app).resolve())] if args.app else [str(VENV_PY), "-m", "divebird"]
@@ -265,6 +304,9 @@ def main():
         page2.wait_for_timeout(1000)
         target = dl_dir / "HLS 串流課程 第一講.mp4"
         results["HLS 串流嗅探 + 下載"] = wait_file(target, 60) and wait_mp4(target)
+
+        # ---------------- 4. AI 透過 MCP 下載瀏覽器偵測到的影音（擴充功能補上 Cookie 與 Referer 送出）
+        results["AI 透過 MCP 下載瀏覽器偵測到的影音"] = mcp_browser_media(cfg_dir, work)
 
         # ---------------- 4.（可選）真實 YouTube：影片為 blob: 串流 → 整頁交給 yt-dlp
         if args.youtube:

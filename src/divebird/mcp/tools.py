@@ -13,8 +13,10 @@ import json
 import re
 import threading
 import time
+import uuid
 from collections import deque
 from pathlib import Path, PureWindowsPath
+from urllib.parse import urlsplit
 from typing import Any, Callable, Protocol
 
 from .. import __version__
@@ -27,11 +29,13 @@ from ..intake import task_from_payload
 from ..models import Kind, Status, Task
 from ..netpolicy import BlockedAddress, check_url
 from ..utils import sanitize_filename
+from .browser import EXPIRED, BrowserMedia
 from .protocol import CallContext
 from .schema import INSTRUCTIONS, MAX_WAIT, TOOL_DEFINITIONS  # noqa: F401
 
 AWAITING = "awaiting_confirmation"     # 等使用者在 Divebird 確認
 REJECTED = "rejected"                  # 使用者按了取消
+WAITING_FOR_BROWSER = "waiting_for_browser"    # 等瀏覽器擴充功能補上登入資訊
 TERMINAL = (Status.COMPLETED, Status.ERROR, Status.PAUSED, REJECTED)
 MAX_PENDING = 3                        # 同時等待確認的下載上限，避免被洗版
 RATE_LIMIT = 60                        # 每分鐘最多呼叫次數
@@ -155,6 +159,14 @@ def _cookies(value: Any, allow: bool) -> list[dict]:
     return out
 
 
+def _with_extension(filename: str, url: str) -> str:
+    """一般檔案的檔名沒有副檔名時（AI 常只說「第三課」），沿用網址的副檔名；影片交給 yt-dlp 自動決定。"""
+    if not filename or Path(filename).suffix:
+        return filename
+    ext = Path(urlsplit(url).path).suffix.lower()
+    return filename + ext if re.fullmatch(r"\.[a-z0-9]{1,5}", ext) else filename
+
+
 def _result(data: Any) -> dict:
     return {"content": [{"type": "text", "text": json.dumps(data, ensure_ascii=False)}],
             "structuredContent": data, "isError": False}
@@ -173,6 +185,7 @@ class DivebirdTools:
         self._calls: deque[float] = deque()
         self._probe_slots = threading.BoundedSemaphore(2)
         self._probes: dict[tuple, dict] = {}
+        self.browser = BrowserMedia()
         self._handlers: dict[str, Callable[[dict, CallContext], Any]] = {
             d["name"]: getattr(self, "_" + d["name"]) for d in TOOL_DEFINITIONS}
 
@@ -244,6 +257,9 @@ class DivebirdTools:
             entry = self._pending.get(task_id)
         task = self.backend.manager.get(task_id)
         if task is None and entry is None:
+            request = self.browser.state(task_id)
+            if request:
+                return self._browser_snapshot(request)
             raise ToolError(f"找不到任務 {task_id}（可能已被移除）。可以用 list_downloads 查看目前的任務。")
         status = task.status if task is not None else entry["state"]
         t = task or entry["task"]
@@ -285,6 +301,7 @@ class DivebirdTools:
                 "cookies_and_login_headers": s.mcp_allow_cookies,
                 "private_network": s.mcp_allow_private,
                 "delete_files": s.mcp_allow_delete,
+                "browser_media": s.mcp_share_browser_media,
             },
             "ffmpeg_available": bool(ffmpeg_path(s.ffmpeg_path)),
             "downloads": {
@@ -305,8 +322,47 @@ class DivebirdTools:
             _http_url(referer, "referer")
         headers = _headers(args.get("headers"), s.mcp_allow_cookies)
         cookies = _cookies(args.get("cookies"), s.mcp_allow_cookies)
-        quality = self._quality(args)
         kind = _choice(args, "kind", "auto", ("auto", "file", "media"))
+        options = self._download_options(args)
+        quality, save_dir, start = options["quality"], options["save_dir"], options["start"]
+
+        task = task_from_payload({"url": url, "referer": referer, "headers": headers, "cookies": cookies,
+                                  "filename": options["filename"]}, s)
+        task.restrict_private = not s.mcp_allow_private     # 先設定：下面的探測也不可轉址到內網
+        if kind != "auto":
+            task.kind = Kind.MEDIA if kind == "media" else Kind.HTTP
+        elif task.kind == Kind.HTTP:
+            task.kind = self._guess_kind(task)
+        if quality:
+            task.media_format = quality
+        if task.kind == Kind.HTTP:
+            task.filename = _with_extension(task.filename, url)
+        task.save_dir = save_dir
+        task.source = f"mcp:{ctx.client}"
+
+        with self._lock:
+            if s.mcp_confirm != "never" and \
+                    sum(1 for v in self._pending.values() if v["state"] == AWAITING) >= MAX_PENDING:
+                raise ToolError(f"已有 {MAX_PENDING} 個下載在等使用者於 Divebird 確認，請等使用者處理後再試。")
+        status, message = self._submit(task, start, ctx.client)
+        return {"task_id": task.id, "status": status, "kind": task.kind, "filename": task.filename or None,
+                "save_dir": task.save_dir, "message": message,
+                "next_step": "用 get_download 查詢進度（wait_seconds 最多 25 秒）。"}
+
+    def _submit(self, task: Task, start: bool, client: str) -> tuple[str, str]:
+        """依「AI 發起的下載要不要確認」的設定，跳出確認視窗或直接加入下載清單。"""
+        if self.settings.mcp_confirm != "never":
+            with self._lock:
+                self._pending[task.id] = {"task": task, "state": AWAITING, "t": time.monotonic()}
+            self.backend.confirm(task, start, client)
+            return AWAITING, "已在 Divebird 跳出確認視窗，使用者確認後就會開始下載。"
+        self.backend.manager.add(task, start)
+        self.backend.announce("AI 已新增下載", task.filename or task.title or task.url)
+        return task.status, "已加入 Divebird 的下載清單。"
+
+    def _download_options(self, args: dict) -> dict:
+        """filename／quality／subdir／start：download 與 download_browser_media 共用的檢查。"""
+        s = self.settings
         start = args.get("start", True)
         if not isinstance(start, bool):
             raise ToolError("start 必須是 true 或 false。")
@@ -316,33 +372,8 @@ class DivebirdTools:
             if not s.mcp_allow_subdir:
                 raise ToolError("Divebird 設定不允許 AI 指定子資料夾，請省略 subdir。")
             save_dir = str(_safe_subdir(s.download_dir, subdir))
-
-        task = task_from_payload({"url": url, "referer": referer, "headers": headers, "cookies": cookies,
-                                  "filename": _string(args, "filename", max_len=255)}, s)
-        task.restrict_private = not s.mcp_allow_private     # 先設定：下面的探測也不可轉址到內網
-        if kind != "auto":
-            task.kind = Kind.MEDIA if kind == "media" else Kind.HTTP
-        elif task.kind == Kind.HTTP:
-            task.kind = self._guess_kind(task)
-        if quality:
-            task.media_format = quality
-        task.save_dir = save_dir
-        task.source = f"mcp:{ctx.client}"
-
-        if s.mcp_confirm != "never":
-            with self._lock:
-                if sum(1 for v in self._pending.values() if v["state"] == AWAITING) >= MAX_PENDING:
-                    raise ToolError(f"已有 {MAX_PENDING} 個下載在等使用者於 Divebird 確認，請等使用者處理後再試。")
-                self._pending[task.id] = {"task": task, "state": AWAITING, "t": time.monotonic()}
-            self.backend.confirm(task, start, ctx.client)
-            status, message = AWAITING, "已在 Divebird 跳出確認視窗，使用者確認後就會開始下載。"
-        else:
-            self.backend.manager.add(task, start)
-            self.backend.announce("AI 已新增下載", task.filename or task.title or task.url)
-            status, message = task.status, "已加入 Divebird 的下載清單。"
-        return {"task_id": task.id, "status": status, "kind": task.kind, "filename": task.filename or None,
-                "save_dir": task.save_dir, "message": message,
-                "next_step": "用 get_download 查詢進度（wait_seconds 最多 25 秒）。"}
+        return {"filename": _string(args, "filename", max_len=255), "quality": self._quality(args),
+                "save_dir": save_dir, "start": start}
 
     def _guess_kind(self, task: Task) -> str:
         """沒有副檔名可判斷時探測一下：播放清單或一般網頁交給 yt-dlp（AI 要的通常是網頁裡的影片，不是 HTML）。"""
@@ -432,6 +463,71 @@ class DivebirdTools:
         completed = task.status == Status.COMPLETED
         self.backend.manager.remove(task_id, delete_files=delete_file)
         return {"task_id": task_id, "removed": True, "file_deleted": bool(delete_file and completed)}
+
+    # ------------------------------------------------------------------ 瀏覽器偵測到的影音
+    def _require_sharing(self) -> None:
+        if not self.settings.mcp_share_browser_media:
+            raise ToolError("使用者沒有開放這項功能：請使用者在 Divebird「設定 → AI 整合」勾選"
+                            "「提供瀏覽器擴充功能偵測到的影音給 AI」。")
+
+    def _list_browser_media(self, args: dict, ctx: CallContext) -> dict:
+        self._require_sharing()
+        tabs = self.browser.listing(_string(args, "query", max_len=200))[: _int(args, "limit", 5, 1, 20)]
+        result: dict[str, Any] = {"tabs": tabs}
+        if not tabs:
+            result["message"] = ("目前沒有偵測到影音。請使用者在瀏覽器播放影片後再試，並確認 Divebird 的瀏覽器擴充功能"
+                                 "已更新到支援 AI 的版本（1.1.0 以上）。")
+        return result
+
+    def _download_browser_media(self, args: dict, ctx: CallContext) -> dict:
+        self._require_sharing()
+        media_id = _string(args, "media_id", required=True, max_len=64)
+        found = self.browser.find(media_id)
+        if not found:
+            raise ToolError("找不到這個 media_id（分頁可能已關閉或換頁）。請重新呼叫 list_browser_media。")
+        self._check_target(found[1]["url"])
+        options = self._download_options(args)
+        task_id = uuid.uuid4().hex[:12]
+        self.browser.request(task_id, media_id, options, ctx.client)
+        return {"task_id": task_id, "status": WAITING_FOR_BROWSER,
+                "message": "已交給瀏覽器擴充功能補上登入資訊，通常 30 秒內開始。",
+                "next_step": "用 get_download 查詢進度（wait_seconds 最多 25 秒）。"}
+
+    def fulfill_browser_request(self, payload: dict) -> bool:
+        """擴充功能送來 AI 指定的下載（含 Cookie 與 Referer）：套用 AI 的選項後送出。由 API 執行緒呼叫。"""
+        request = self.browser.take(str(payload.get("mcp_request") or ""))
+        if not request:
+            return False
+        s, options = self.settings, request["options"]
+        payload = dict(payload)
+        if options["filename"]:
+            payload["filename"] = options["filename"]
+        task = task_from_payload(payload, s)
+        task.id = request["request_id"]
+        if options["quality"]:
+            task.media_format = options["quality"]
+        if task.kind == Kind.HTTP:
+            task.filename = _with_extension(task.filename, task.url)
+        task.save_dir = options["save_dir"]
+        task.source = f"mcp:{request['client']}"
+        task.restrict_private = not s.mcp_allow_private
+        self._submit(task, options["start"], request["client"])
+        return True
+
+    def _browser_snapshot(self, request: dict) -> dict:
+        url = urlsplit(request["url"])
+        data = {"task_id": request["request_id"], "status": WAITING_FOR_BROWSER, "kind": None,
+                "url": f"{url.scheme}://{url.netloc}{url.path}", "title": request["title"] or None,
+                "filename": request["options"]["filename"] or None, "save_dir": request["options"]["save_dir"],
+                "downloaded_bytes": 0, "total_bytes": None, "progress_percent": None, "speed_bytes_per_sec": 0,
+                "eta_seconds": None, "error": None, "source": "ai",
+                "message": "等瀏覽器擴充功能補上登入資訊（通常 30 秒內）。"}
+        if request["state"] == EXPIRED:
+            data["status"] = Status.ERROR
+            data["error"] = ("瀏覽器擴充功能沒有回應：分頁可能已關閉，或擴充功能還沒更新到支援 AI 的版本（1.1.0 以上）。"
+                             "可以改用 download 直接下載網址。")
+            data.pop("message")
+        return data
 
     # ------------------------------------------------------------------ probe_url
     def _probe_url(self, args: dict, ctx: CallContext) -> dict:

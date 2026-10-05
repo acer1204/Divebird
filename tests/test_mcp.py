@@ -104,7 +104,8 @@ def env(tmp_path, monkeypatch):
     backend = FakeBackend(settings, store=tmp_path / "tasks.json")
     service = McpService(settings, backend)
     backend.service = service
-    server = ApiServer(settings.port, on_download=lambda p: None, on_show=lambda: None, mcp=service)
+    server = ApiServer(settings.port, on_show=lambda: None, mcp=service,
+                       on_download=lambda p: p.get("mcp_request") and service.tools.fulfill_browser_request(p))
     assert server.start()
     client = Mcp(settings.port, mcp_token.ensure())
     yield settings, backend, client
@@ -139,7 +140,7 @@ def test_legacy_handshake_and_tools(env):
     assert c.legacy("ping").json()["result"] == {}
     names = [t["name"] for t in c.legacy("tools/list").json()["result"]["tools"]]
     assert names == ["get_status", "probe_url", "download", "get_download", "list_downloads",
-                     "control_download", "remove_download"]
+                     "control_download", "remove_download", "list_browser_media", "download_browser_media"]
     call = c.legacy("tools/call", {"name": "get_status", "arguments": {}}).json()["result"]
     assert call["isError"] is False and call["structuredContent"]["app"] == "Divebird"
     assert "resultType" not in call, "舊世代的結果不帶 resultType"
@@ -157,7 +158,7 @@ def test_modern_discover_list_and_call(env):
     assert res["_meta"]["io.modelcontextprotocol/serverInfo"]["name"] == "divebird"
     assert res["ttlMs"] > 0 and res["cacheScope"] == "public"
     tools = c.modern("tools/list").json()["result"]
-    assert tools["resultType"] == "complete" and tools["ttlMs"] > 0 and len(tools["tools"]) == 7
+    assert tools["resultType"] == "complete" and tools["ttlMs"] > 0 and len(tools["tools"]) == 9
     for t in tools["tools"]:
         assert t["inputSchema"]["type"] == "object" and t["description"]
     call = c.call("get_status")
@@ -401,7 +402,7 @@ def test_stdio_bridge(env, tmp_path):
     replies = {r["id"]: r for r in (json.loads(line) for line in out.decode("utf-8").splitlines())}
     assert sorted(replies) == [1, 2, 3, 4, 5], err.decode("utf-8", "replace")
     assert replies[1]["result"]["serverInfo"]["name"] == "divebird"
-    assert len(replies[2]["result"]["tools"]) == 7
+    assert len(replies[2]["result"]["tools"]) == 9
     status = replies[3]["result"]
     assert status["isError"] is False and status["structuredContent"]["app"] == "Divebird"
     assert replies[4]["result"]["resultType"] == "complete"
@@ -441,3 +442,96 @@ def test_settings_dialog_ai_tab(tmp_path, monkeypatch):
     assert not settings.mcp_allow_delete and settings.mcp_allow_subdir
     dlg.deleteLater()
     app.processEvents()
+
+
+# ---------------------------------------------------------------------- 瀏覽器偵測到的影音
+def _extension(settings, path, payload=None):
+    """模擬瀏覽器擴充功能呼叫本機 API（帶擴充功能的 Origin）。"""
+    url = f"http://127.0.0.1:{settings.port}{path}"
+    headers = {"Origin": "chrome-extension://divebird-test"}
+    if payload is None:
+        return requests.get(url, headers=headers, timeout=10).json()
+    return requests.post(url, json=payload, headers=headers, timeout=10).json()
+
+
+def test_browser_media_needs_permission(env):
+    settings, _, c = env
+    assert _extension(settings, "/api/ping")["share_media"] is False
+    res = c.call("list_browser_media")
+    assert res["isError"] and "偵測到的影音" in res["content"][0]["text"]
+    settings.mcp_share_browser_media = True
+    assert _extension(settings, "/api/ping")["share_media"] is True
+    settings.mcp_enabled = False
+    assert _extension(settings, "/api/ping")["share_media"] is False, "MCP 關閉時不分享"
+
+
+def test_browser_media_flow(env, server):
+    """擴充功能回報偵測到的影音 → AI 挑選 → 擴充功能補上 Cookie 送出 → 完成下載。AI 看不到查詢參數與 Cookie。"""
+    settings, backend, c = env
+    settings.mcp_share_browser_media = True
+    data = server.add("/media/lesson.mp4", 500_000)
+    secret_url = server.url("/media/lesson.mp4") + "?token=SECRET"
+    reply = _extension(settings, "/api/media", {
+        "tab_id": 7, "page_url": "https://course.example/lesson/3?session=PRIVATE", "title": "第 3 課",
+        "items": [{"url": secret_url, "type": "video", "mime": "video/mp4", "size": 500_000, "time": 1}]})
+    assert reply == {"ok": True, "requests": []}
+
+    listed = c.call("list_browser_media")["structuredContent"]
+    tab = listed["tabs"][0]
+    assert tab["page_title"] == "第 3 課" and tab["page"] == "course.example/lesson/3"
+    media = tab["media"][0]
+    assert media["name"] == "lesson.mp4" and media["type"] == "video" and media["size_bytes"] == 500_000
+    assert "SECRET" not in json.dumps(listed) and "PRIVATE" not in json.dumps(listed)
+    assert c.call("list_browser_media", {"query": "第 3 課"})["structuredContent"]["tabs"]
+    assert not c.call("list_browser_media", {"query": "nothing"})["structuredContent"]["tabs"]
+
+    started = c.call("download_browser_media", {"media_id": media["media_id"], "filename": "第三課"})
+    task_id = started["structuredContent"]["task_id"]
+    assert started["structuredContent"]["status"] == "waiting_for_browser"
+    waiting = c.call("get_download", {"task_id": task_id})["structuredContent"]
+    assert waiting["status"] == "waiting_for_browser" and "SECRET" not in json.dumps(waiting)
+
+    # 擴充功能詢問待處理的下載：拿到完整網址，補上 Cookie 與 Referer 後送出
+    pending = _extension(settings, "/api/media/requests")["requests"]
+    assert [r["request_id"] for r in pending] == [task_id] and pending[0]["url"] == secret_url
+    assert _extension(settings, "/api/download", {
+        "url": secret_url, "kind": "http", "mcp_request": task_id, "page_url": "https://course.example/lesson/3",
+        "cookies": [{"name": "sid", "value": "browser-cookie", "domain": "127.0.0.1", "path": "/"}],
+        "title": "第 3 課"})["ok"]
+    done = _wait_status(c, task_id, (Status.COMPLETED, Status.ERROR))
+    assert done["status"] == Status.COMPLETED and done["filename"] == "第三課.mp4", "補上網址的副檔名"
+    with open(done["path"], "rb") as f:
+        assert hashlib.sha256(f.read()).digest() == hashlib.sha256(data).digest()
+    task = backend.manager.get(task_id)
+    assert task.source == "mcp:pytest-client"
+    assert _extension(settings, "/api/media/requests")["requests"] == [], "每個請求只送出一次"
+
+    # 分頁關閉（空清單）後就不再列出
+    _extension(settings, "/api/media", {"tab_id": 7, "items": []})
+    assert c.call("list_browser_media")["structuredContent"]["tabs"] == []
+
+
+def test_browser_request_expires(env, server, monkeypatch):
+    from divebird.mcp import browser
+
+    settings, _, c = env
+    settings.mcp_share_browser_media = True
+    _extension(settings, "/api/media", {"tab_id": 1, "page_url": "https://a.example/", "title": "t",
+                                        "items": [{"url": server.url("/x.mp4"), "type": "video"}]})
+    media_id = c.call("list_browser_media")["structuredContent"]["tabs"][0]["media"][0]["media_id"]
+    task_id = c.call("download_browser_media", {"media_id": media_id})["structuredContent"]["task_id"]
+    monkeypatch.setattr(browser, "REQUEST_TTL", 0)
+    expired = c.call("get_download", {"task_id": task_id})["structuredContent"]
+    assert expired["status"] == Status.ERROR and "擴充功能" in expired["error"]
+    assert _extension(settings, "/api/media/requests")["requests"] == []
+    res = c.call("download_browser_media", {"media_id": "000000000000"})
+    assert res["isError"] and "list_browser_media" in res["content"][0]["text"]
+
+
+def test_browser_media_ignored_when_sharing_is_off(env):
+    settings, backend, c = env
+    reply = _extension(settings, "/api/media", {"tab_id": 2, "items": [{"url": "https://a.example/v.mp4"}]})
+    assert reply == {"ok": True, "requests": []}
+    settings.mcp_share_browser_media = True
+    assert c.call("list_browser_media")["structuredContent"]["tabs"] == [], "關閉期間送來的清單不保留"
+

@@ -42,6 +42,7 @@ async function refreshStatus() {
   const res = await chrome.runtime.sendMessage({ type: "ping" });
   $("dot").className = `dot ${res && res.ok ? "ok" : "err"}`;
   $("status").textContent = res && res.ok ? "已連線" : "未連線（請啟動 Divebird）";
+  $("share-hint").hidden = !(res && res.ok && res.shareMedia);
 }
 
 async function init() {

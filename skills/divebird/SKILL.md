@@ -21,7 +21,11 @@ Divebird 是使用者電腦上的下載管理員，透過 MCP 工具（伺服器
 ## 下載之後
 - `download` 會立即回傳 `task_id`。先告訴使用者檔名與資料夾，再用 `get_download`（`wait_seconds` 最多 25）查進度，間隔逐漸拉長。不要無限等待；可以告訴使用者「完成時 Divebird 會通知」。
 - `status: "awaiting_confirmation"`：請使用者到 Divebird 跳出的視窗按「開始下載」。`rejected` 表示使用者取消了，不要重送。
-- 失敗時看 `error`：403 多半是網址過期或缺少 Referer；需要登入的網站，請使用者改用瀏覽器擴充功能的下載按鈕。
+- 失敗時看 `error`：403 多半是網址過期或缺少 Referer。
+
+## 需要登入的網站
+- `permissions.browser_media` 為 true 時：請使用者先在瀏覽器開啟並播放影片，再用 `list_browser_media` 找到它，用 `download_browser_media` 下載。Cookie 由擴充功能補上，你不會也不需要看到。狀態會先是 `waiting_for_browser`（通常 30 秒內開始）。
+- 否則請使用者改用瀏覽器擴充功能的下載按鈕，或到 Divebird 設定開放這項功能。
 
 ## 規則
 - 只下載使用者有權取得的內容。`probe_url` 回報 DRM 或直播時，告知使用者並停止。

@@ -167,7 +167,7 @@ Divebird 內建 [MCP](https://modelcontextprotocol.io/)（Model Context Protocol
 
 - **權限**（設定 → AI 整合，啟用 MCP 後才能修改）：AI 發起的下載預設每次都要在 Divebird 跳出的視窗確認，視窗會標示「由 AI 工具發起」；指定子資料夾預設允許；傳入 Cookie 與登入資訊、下載內網位址、刪除檔案預設都不允許。
 - **Skill**：[`skills/divebird/SKILL.md`](skills/divebird/SKILL.md) 是給 AI 的使用提示，把這個資料夾的路徑告訴你的 AI 工具即可。
-- 需要登入的網站，AI 拿不到你瀏覽器裡的 Cookie，請改用擴充功能的下載按鈕。
+- **瀏覽器偵測到的影音**：在「設定 → AI 整合」勾選「提供瀏覽器擴充功能偵測到的影音給 AI」後，AI 可以列出各分頁偵測到的影音並指定下載，需要登入的網站也能下載：Cookie 由擴充功能在下載時補上，不會經過 AI。AI 只看得到網頁標題與網址的主機、路徑，看不到查詢參數；無痕視窗不分享。需要擴充功能 1.1.0 以上（更新後到 `chrome://extensions` 按重新載入）。沒有開放時，需要登入的網站請改用擴充功能的下載按鈕。
 - 支援 MCP 的 2025-03-26 ～ 2025-11-25 與 2026-07-28 兩代協定。Divebird 必須在執行中（可縮小在系統匣），建議開啟登入時自動啟動。
 
 ### 自行打包
@@ -385,7 +385,7 @@ Divebird has a built-in [MCP](https://modelcontextprotocol.io/) (Model Context P
 
 - **Permissions** (Settings → AI integration, editable once MCP is enabled): by default every AI-initiated download must be approved in a Divebird window that says it came from an AI tool; sub-folders are allowed; passing cookies and login headers, private-network addresses and deleting files are not allowed.
 - **Skill**: [`skills/divebird/SKILL.md`](skills/divebird/SKILL.md) contains usage hints for AI agents; point your AI tool at that folder.
-- The AI cannot use your browser's cookies, so for sites that need a login, use the extension's download button instead.
+- **Media detected in the browser**: tick "提供瀏覽器擴充功能偵測到的影音給 AI" (share media detected by the browser extension with AI) in Settings → AI integration, and the AI can list the media detected in your tabs and download one of them, even on sites that need a login: the extension adds the cookies when the download starts, so they never pass through the AI. The AI only sees page titles and the host and path of each address, never query strings, and incognito windows are not shared. This needs extension 1.1.0 or later (reload it on `chrome://extensions` after updating). Without it, use the extension's download button for sites that need a login.
 - Supports both MCP generations: 2025-03-26 to 2025-11-25, and 2026-07-28. Divebird must be running (it can stay in the system tray); turning on start at login is recommended.
 
 ### Build it yourself

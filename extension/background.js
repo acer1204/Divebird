@@ -2,6 +2,7 @@
 //  1. 監聽網路請求，偵測每個分頁中的影音檔與 HLS(m3u8) / DASH(mpd) 串流
 //  2. 接收懸浮按鈕 / 彈出視窗 / 右鍵選單的下載請求，連同 Cookie、Referer 傳給桌面程式
 //  3. （可選）攔截瀏覽器的一般下載，改交給 Divebird 多連線下載
+//  4. （Divebird 開放時）把偵測到的影音清單提供給 AI 工具挑選；AI 要求下載時在這裡補上 Cookie
 
 const DEFAULTS = {
   port: 17890,
@@ -101,6 +102,7 @@ async function clearTab(tabId) {
   tabMedia.set(tabId, []);
   persistTab(tabId);
   updateBadge(tabId);
+  pushMedia(tabId);
 }
 
 chrome.webRequest.onBeforeSendHeaders.addListener(
@@ -165,6 +167,7 @@ async function recordMedia(tabId, item) {
   }
   persistTab(tabId);
   updateBadge(tabId);
+  pushMedia(tabId);
 }
 
 // 換頁（包含 YouTube 這類單頁應用切換影片）時清除舊的偵測結果
@@ -183,6 +186,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   tabMedia.delete(tabId);
   tabUrls.delete(tabId);
   chrome.storage.session.remove([`media_${tabId}`, `url_${tabId}`]);
+  pushMedia(tabId);
 });
 
 // ------------------------------------------------------------------ 與桌面程式通訊
@@ -192,14 +196,21 @@ async function apiBase() {
 }
 
 async function ping() {
+  lastPing = Date.now();
+  let ok = false;
+  let share = false;
   try {
     const r = await fetch(`${await apiBase()}/api/ping`, { signal: AbortSignal.timeout(1500) });
-    if (!r.ok) return false;
-    const j = await r.json();
-    return j.app === "Divebird";
+    if (r.ok) {
+      const j = await r.json();
+      ok = j.app === "Divebird";
+      share = ok && j.share_media === true;
+    }
   } catch {
-    return false;
+    /* 桌面程式沒在執行 */
   }
+  setShareMedia(share);
+  return ok;
 }
 
 async function collectCookies(urls) {
@@ -253,6 +264,7 @@ async function sendToApp(item, tab) {
     headers,
     cookies: await collectCookies([item.url, pageUrl]),
     source: item.source || "",
+    mcp_request: item.mcpRequest || "",
   };
   let r;
   try {
@@ -291,7 +303,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return { ok: true };
       }
       case "ping":
-        return { ok: await ping() };
+        return { ok: await ping(), shareMedia };
       case "bypassNext":
         bypassUntil = Date.now() + 4000;
         return { ok: true };
@@ -373,3 +385,83 @@ chrome.downloads.onCreated.addListener(async (item) => {
     chrome.downloads.download({ url });
   }
 });
+
+// ------------------------------------------------------------------ 提供偵測到的影音給 AI 工具（MCP）
+// 使用者在 Divebird「設定 → AI 整合」開放後，/api/ping 會回報 share_media：
+//  - 把各分頁偵測到的影音清單（網址、類型、大小；不含 Cookie 與請求標頭）傳給 Divebird，無痕視窗除外
+//  - AI 指定要下載時，Divebird 把請求排著等這裡來取；這裡補上 Cookie 與 Referer 再送出，登入資訊不會經過 AI
+//  - 沒開放時完全不傳送，也不定期喚醒
+let shareMedia = false;
+let lastPing = 0;
+const pushTimers = new Map();
+const handledRequests = new Set();
+
+function setShareMedia(on) {
+  if (on === shareMedia) return;
+  shareMedia = on;
+  if (on) {
+    chrome.alarms.create("divebird-requests", { periodInMinutes: 0.5 });
+    for (const tabId of tabMedia.keys()) pushMedia(tabId);
+  } else {
+    chrome.alarms.clear("divebird-requests");
+  }
+}
+
+function pushMedia(tabId) {
+  if (!shareMedia) {
+    // 偵測到影音時順便確認 Divebird 是否已開放（最多每分鐘一次）
+    if (Date.now() - lastPing > 60000) ping().catch(() => {});
+    return;
+  }
+  clearTimeout(pushTimers.get(tabId));
+  pushTimers.set(
+    tabId,
+    setTimeout(() => {
+      pushTimers.delete(tabId);
+      pushMediaNow(tabId).catch(() => {});
+    }, 1000)
+  );
+}
+
+async function pushMediaNow(tabId) {
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (tab && tab.incognito) return; // 無痕視窗的內容不分享
+  const list = tab ? await loadTab(tabId) : [];
+  const items = list.map((m) => ({ url: m.url, type: m.type, mime: m.mime || "", size: m.size || 0, time: m.time || 0 }));
+  const r = await fetch(`${await apiBase()}/api/media`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tab_id: tabId, page_url: tab?.url || "", title: tab?.title || "", items }),
+    signal: AbortSignal.timeout(3000),
+  });
+  if (r.ok) await fulfillRequests((await r.json()).requests || []);
+}
+
+async function pollRequests() {
+  if (!(await ping()) || !shareMedia) return;
+  const r = await fetch(`${await apiBase()}/api/media/requests`, { signal: AbortSignal.timeout(3000) });
+  if (r.ok) await fulfillRequests((await r.json()).requests || []);
+}
+
+async function fulfillRequests(requests) {
+  for (const req of requests) {
+    if (!req || handledRequests.has(req.request_id)) continue;
+    handledRequests.add(req.request_id);
+    const list = await loadTab(req.tab_id);
+    const media = list.find((m) => mediaKey(m.url) === mediaKey(req.url)) || { url: req.url, type: req.type };
+    const tab = await chrome.tabs.get(req.tab_id).catch(() => null);
+    try {
+      await sendToApp(
+        { ...media, url: req.url, pageUrl: req.page_url || tab?.url || "", mcpRequest: req.request_id, source: "mcp" },
+        tab
+      );
+    } catch {
+      /* 送不出去：Divebird 會讓這個請求逾時，AI 會看到錯誤訊息 */
+    }
+  }
+}
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === "divebird-requests") pollRequests().catch(() => {});
+});
+

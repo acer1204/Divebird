@@ -11,7 +11,8 @@
     "storage",
     "contextMenus",
     "cookies",
-    "downloads"
+    "downloads",
+    "alarms"
   ],
   "host_permissions": [
     "<all_urls>"

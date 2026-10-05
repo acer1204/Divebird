@@ -127,6 +127,7 @@ class Settings:
     mcp_allow_cookies: bool = False   # AI 可傳入 Cookie 與 Authorization 等登入資訊
     mcp_allow_private: bool = False   # AI 可下載內網與本機位址
     mcp_allow_delete: bool = False    # AI 可刪除已下載的檔案
+    mcp_share_browser_media: bool = False   # 把瀏覽器擴充功能偵測到的影音清單提供給 AI（不含 Cookie）
 
     _lock = threading.Lock()
 

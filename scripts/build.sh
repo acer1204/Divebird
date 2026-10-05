@@ -13,6 +13,7 @@ QT_QPA_PLATFORM=offscreen "$PY" scripts/gen_icons.py
 DIST="$ROOT/dist/Divebird"
 cp -r "$ROOT/extension" "$DIST/extension"
 cp "$ROOT/README.md" "$DIST/"
+cp -r "$ROOT/skills" "$DIST/skills"
 cp "$ROOT/assets/divebird.png" "$DIST/divebird.png"
 cp "$ROOT/scripts/linux-install.sh" "$DIST/install.sh"
 chmod +x "$DIST/install.sh" "$DIST/Divebird" "$DIST/_internal/tools/"*

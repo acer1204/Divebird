@@ -140,6 +140,11 @@ class Controller(QObject):
 
     def _api_download(self, payload: dict):
         """由 API 執行緒呼叫：另開執行緒判斷網址類型，讓擴充功能立即收到回應。"""
+        if payload.get("mcp_request"):
+            # 擴充功能補上登入資訊後送來的、AI 指定的下載（list_browser_media → download_browser_media）
+            threading.Thread(target=self.mcp.tools.fulfill_browser_request, args=(payload,), daemon=True).start()
+            return
+
         def work():
             self.bridge.download_requested.emit(task_from_payload(payload, self.settings), True)
         threading.Thread(target=work, daemon=True).start()

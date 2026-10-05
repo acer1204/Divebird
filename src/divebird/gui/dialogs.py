@@ -509,7 +509,9 @@ class SettingsDialog(QDialog):
         self.mcp_private.setChecked(s.mcp_allow_private)
         self.mcp_delete = QCheckBox("允許刪除已下載的檔案")
         self.mcp_delete.setChecked(s.mcp_allow_delete)
-        for box in (self.mcp_subdir, self.mcp_cookies, self.mcp_private, self.mcp_delete):
+        self.mcp_share = QCheckBox("提供瀏覽器擴充功能偵測到的影音給 AI（AI 看不到 Cookie，下載時由擴充功能補上）")
+        self.mcp_share.setChecked(s.mcp_share_browser_media)
+        for box in (self.mcp_subdir, self.mcp_cookies, self.mcp_private, self.mcp_delete, self.mcp_share):
             fp.addRow("", box)
         v.addWidget(perm)
         v.addStretch(1)
@@ -608,6 +610,7 @@ class SettingsDialog(QDialog):
         s.mcp_allow_cookies = self.mcp_cookies.isChecked()
         s.mcp_allow_private = self.mcp_private.isChecked()
         s.mcp_allow_delete = self.mcp_delete.isChecked()
+        s.mcp_share_browser_media = self.mcp_share.isChecked()
         s.save()
         if self.autostart.isChecked() != autostart.is_enabled():
             try:
