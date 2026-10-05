@@ -416,6 +416,58 @@ def test_rate_limit(env, monkeypatch):
     assert [r["isError"] for r in results] == [False, False, False, True]
 
 
+def test_gui_confirmation_dialog(tmp_path, monkeypatch, server):
+    """真正的 Qt 介面：AI 發起的下載跳出標示「AI 發起」的確認視窗；按「開始下載」或「取消」都要回報給 AI。"""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "appdata"))
+    from PySide6.QtWidgets import QApplication
+
+    from divebird.gui.app import Controller
+    from divebird.mcp.protocol import CallContext
+
+    app = QApplication.instance() or QApplication([])
+    settings = Settings(download_dir=str(tmp_path / "dl"), port=_free_port(), mcp_enabled=True,
+                        mcp_confirm="always", mcp_allow_private=True, minimize_to_tray=False)
+    ctl = Controller(app, settings)
+    try:
+        server.add("/a.bin", 50_000)
+        ctx = CallContext("測試 AI", "2025-11-25")
+
+        def request() -> str:
+            res = ctl.mcp.tools.call("download", {"url": server.url("/a.bin")}, ctx)
+            assert res["structuredContent"]["status"] == "awaiting_confirmation"
+            app.processEvents()
+            return res["structuredContent"]["task_id"]
+
+        task_id = request()
+        dialog = next(d for d in ctl._dialogs if d.task.id == task_id)
+        assert dialog.origin == "測試 AI" and "AI" in dialog.windowTitle()
+        assert not dialog.skip_box.isVisibleTo(dialog), "AI 發起的視窗不提供「不再顯示」"
+        dialog._submit(True)
+        app.processEvents()
+        assert ctl.manager.get(task_id) is not None
+        deadline = time.monotonic() + 20
+        while ctl.manager.get(task_id).status != Status.COMPLETED and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(0.05)
+        assert ctl.manager.get(task_id).status == Status.COMPLETED
+
+        task_id = request()
+        dialog = next(d for d in ctl._dialogs if d.task.id == task_id)
+        dialog.reject()
+        app.processEvents()
+        snap = ctl.mcp.tools.call("get_download", {"task_id": task_id}, ctx)["structuredContent"]
+        assert snap["status"] == "rejected"
+        assert ctl.manager.get(task_id) is None
+    finally:
+        ctl.manager.shutdown()
+        if ctl.server:
+            ctl.server.stop()
+        ctl.window.deleteLater()
+        app.processEvents()
+
+
 def test_settings_dialog_ai_tab(tmp_path, monkeypatch):
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     monkeypatch.setenv("APPDATA", str(tmp_path))
