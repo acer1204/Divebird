@@ -210,6 +210,7 @@ class Controller(QObject):
         menu.addAction("全部開始", self.manager.start_all)
         menu.addAction("全部暫停", self.manager.pause_all)
         menu.addSeparator()
+        menu.addAction("關於 Divebird", self.window.open_about)
         menu.addAction("結束 Divebird", self.quit)
         tray.setContextMenu(menu)
         tray.activated.connect(lambda reason: reason in (QSystemTrayIcon.ActivationReason.Trigger,

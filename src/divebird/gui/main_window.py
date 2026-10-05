@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 from ..models import Status, Task
 from ..utils import human_size, open_path
 from . import icons
-from .dialogs import AddUrlDialog, DeleteDialog, SettingsDialog
+from .dialogs import AboutDialog, AddUrlDialog, DeleteDialog, SettingsDialog
 from .task_model import (
     CATEGORIES, COL_ADDED, COL_ETA, COL_NAME, COL_PROGRESS, COL_SIZE, COL_SPEED, COL_STATUS, TASK_ROLE,
     ProgressDelegate, TaskFilter, TaskModel, in_category,
@@ -91,6 +91,7 @@ class MainWindow(QMainWindow):
         self.act_folder = act("folder", "開啟資料夾", self.open_folder)
         tb.addSeparator()
         act("settings", "設定", self.open_settings)
+        act("info", "關於", self.open_about)
         quit_act = QAction("結束", self)
         quit_act.setShortcut(QKeySequence("Ctrl+Q"))
         quit_act.triggered.connect(self.ctl.quit)
@@ -293,6 +294,9 @@ class MainWindow(QMainWindow):
             if self.ctl.settings.port != old_port:
                 self.ctl.restart_server()
             self.update_api_status()
+
+    def open_about(self):
+        AboutDialog(self).exec()
 
     def _double_clicked(self, index):
         t: Task = self.proxy.data(index, TASK_ROLE)

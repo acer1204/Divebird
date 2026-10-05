@@ -6,15 +6,15 @@ import os
 import threading
 
 import requests
-from PySide6.QtCore import QObject, Qt, QTimer, Signal
-from PySide6.QtGui import QFont, QGuiApplication, QPixmap
+from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QFont, QGuiApplication, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
     QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QSizePolicy, QSpinBox, QTabWidget,
     QVBoxLayout, QWidget,
 )
 
-from .. import __version__, autostart
+from .. import __version__, about, autostart
 from ..config import Settings
 from ..engine.http_engine import make_session, probe
 from ..engine.media_engine import AUDIO_BEST, AUDIO_MP3, extract_info, format_choices
@@ -581,13 +581,7 @@ class SettingsDialog(QDialog):
 
     @staticmethod
     def _about_text() -> str:
-        try:
-            from yt_dlp.version import __version__ as ytv
-        except Exception:  # noqa: BLE001
-            ytv = "?"
-        ok = lambda p: "✓ 內附" if p else "✗ 找不到"  # noqa: E731
-        return (f"Divebird {__version__}　·　yt-dlp {ytv}　·　ffmpeg {ok(ffmpeg_path())}　·　"
-                f"deno {ok(deno_path())}")
+        return f"Divebird {__version__}　·　{component_versions()}"
 
     def _save(self):
         s = self.settings
@@ -618,3 +612,118 @@ class SettingsDialog(QDialog):
             except OSError:
                 pass
         self.accept()
+
+
+def component_versions() -> str:
+    try:
+        from yt_dlp.version import __version__ as ytv
+    except Exception:  # noqa: BLE001
+        ytv = "?"
+    ok = lambda p: "✓ 內附" if p else "✗ 找不到"  # noqa: E731
+    return f"yt-dlp {ytv}　·　ffmpeg {ok(ffmpeg_path())}　·　deno {ok(deno_path())}"
+
+
+class _UpdateSignals(QObject):
+    done = Signal(object)          # dict（GitHub 上的最新版本）或 str（錯誤訊息）
+
+
+def _link(url: str, text: str) -> QLabel:
+    label = QLabel(f'<a href="{url}">{text}</a>')
+    label.setOpenExternalLinks(True)
+    label.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+    return label
+
+
+class AboutDialog(QDialog):
+    """關於：版本、作者、專案網址與授權，並可檢查 GitHub 上有沒有新版本。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("關於 Divebird")
+        self.setMinimumWidth(480)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(24, 22, 24, 16)
+        lay.setSpacing(16)
+
+        head = QHBoxLayout()
+        head.setSpacing(16)
+        logo = QLabel()
+        ratio = self.devicePixelRatioF()
+        pix = QPixmap.fromImage(icons.render_svg(icons.app_svg_for(72), round(72 * ratio)))
+        pix.setDevicePixelRatio(ratio)
+        logo.setPixmap(pix)
+        head.addWidget(logo, 0, Qt.AlignmentFlag.AlignTop)
+        names = QVBoxLayout()
+        names.setSpacing(4)
+        title = QLabel("Divebird")
+        font = title.font()
+        font.setPointSizeF(font.pointSizeF() * 1.9)
+        font.setBold(True)
+        title.setFont(font)
+        names.addWidget(title)
+        names.addWidget(QLabel("下載管理員　·　看準、俯衝、下載到手。"))
+        names.addStretch(1)
+        head.addLayout(names, 1)
+        lay.addLayout(head)
+
+        form = QFormLayout()
+        form.setHorizontalSpacing(18)
+        form.setVerticalSpacing(8)
+        form.addRow("版本", QLabel(__version__))
+        form.addRow("作者", _link(about.AUTHOR_URL, about.AUTHOR))
+        form.addRow("專案網址", _link(about.REPO_URL, about.REPO_URL.removeprefix("https://")))
+        form.addRow("授權", _link(about.LICENSE_URL, about.LICENSE_NAME))
+        parts = QLabel(component_versions())
+        parts.setWordWrap(True)
+        form.addRow("內附元件", parts)
+        lay.addLayout(form)
+
+        buttons = QDialogButtonBox()
+        self.check_btn = buttons.addButton("檢查更新", QDialogButtonBox.ButtonRole.ActionRole)
+        buttons.addButton("關閉", QDialogButtonBox.ButtonRole.RejectRole)
+        buttons.rejected.connect(self.reject)
+        self.check_btn.clicked.connect(self.check_updates)
+        lay.addWidget(buttons)
+
+        self._sig = _UpdateSignals(self)
+        self._sig.done.connect(self._update_checked)
+
+    def check_updates(self) -> None:
+        self.check_btn.setEnabled(False)
+        self.check_btn.setText("檢查中…")
+        sig = self._sig
+
+        def work():
+            try:
+                result = about.latest_release()
+            except about.UpdateCheckError as e:
+                result = str(e)
+            except Exception as e:  # noqa: BLE001
+                result = str(e) or type(e).__name__
+            try:
+                sig.done.emit(result)
+            except RuntimeError:        # 視窗已經關閉
+                pass
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _update_checked(self, result) -> None:
+        self.check_btn.setEnabled(True)
+        self.check_btn.setText("檢查更新")
+        if isinstance(result, str):
+            QMessageBox.warning(self, "檢查更新", f"無法檢查更新：{result}")
+        elif about.is_newer(result["version"]):
+            if self._ask_update(result["version"]):
+                QDesktopServices.openUrl(QUrl(result["url"]))
+        else:
+            QMessageBox.information(self, "檢查更新", f"已經是最新版本（{__version__}）。")
+
+    def _ask_update(self, version: str) -> bool:
+        box = QMessageBox(QMessageBox.Icon.Question, "有新版本",
+                          f"Divebird {version} 已經推出，目前使用的是 {__version__}。\n"
+                          "要開啟 GitHub 的下載頁面更新嗎？", parent=self)
+        yes = box.addButton("是", QMessageBox.ButtonRole.YesRole)
+        box.addButton("否", QMessageBox.ButtonRole.NoRole)
+        box.setDefaultButton(yes)
+        box.exec()
+        return box.clickedButton() is yes

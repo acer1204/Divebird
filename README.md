@@ -45,7 +45,7 @@ Divebird 是開源、跨平台（Windows／Linux）的下載管理員，支援�
 | **攔截瀏覽器下載** | 一般檔案的下載會自動轉交 Divebird 多連線下載；按住 **Alt** 再點連結，則改由瀏覽器自行下載 |
 | **內建執行環境** | 免安裝版已內含 Python、Qt、yt-dlp、FFmpeg、Deno，不需要另外安裝任何軟體 |
 | **AI 整合（MCP）** | 支援 MCP 的 AI 工具可以請 Divebird 下載、查詢進度；權限可在設定中控制，AI 發起的下載預設要經你確認 |
-| **其他** | 下載佇列、同時下載數與全域限速、分類與搜尋、拖曳網址、系統匣、完成通知、登入時自動啟動、深色模式 |
+| **其他** | 下載佇列、同時下載數與全域限速、分類與搜尋、拖曳網址、系統匣、完成通知、登入時自動啟動、深色模式、檢查更新 |
 
 ### 截圖
 
@@ -70,6 +70,24 @@ Divebird 是開源、跨平台（Windows／Linux）的下載管理員，支援�
   <tr>
     <td align="center">下載前確認檔名、畫質與儲存位置</td>
     <td align="center">擴充功能彈出視窗：偵測到的影音與設定</td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/images/settings-ai-dark.png">
+        <img src="docs/images/settings-ai-light.png" alt="設定 → AI 整合">
+      </picture>
+    </td>
+    <td width="50%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/images/about-dark.png">
+        <img src="docs/images/about-light.png" alt="關於 Divebird">
+      </picture>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">設定 → AI 整合：啟用 MCP、複製連線設定、決定 AI 的權限</td>
+    <td align="center">關於：版本、作者與授權，按「檢查更新」查看 GitHub 上有沒有新版</td>
   </tr>
 </table>
 
@@ -135,6 +153,7 @@ cd Divebird
 - **右鍵選單**：在連結或影片／音訊上按右鍵，選擇「用 Divebird 下載此連結」或「用 Divebird 下載此影片／音訊」；在網頁空白處按右鍵，選擇「用 Divebird 解析此頁面的影片」。
 - **攔截瀏覽器下載**：一般檔案的下載會自動轉交 Divebird；按住 **Alt** 再點連結，則由瀏覽器自行下載。可在彈出視窗中關閉此功能。
 - **桌面程式**：按「新增網址」或直接把連結拖曳到視窗；在清單上按右鍵可開啟檔案、重新下載、複製網址。
+- **檢查更新**：按工具列的「關於」，再按「檢查更新」。有新版本時會詢問是否開啟 GitHub 的下載頁面；只有按下按鈕時才會連線查詢。
 
 收到下載時，Divebird 會先顯示「下載檔案資訊」視窗（檔名、大小、畫質、儲存位置）；勾選「不再顯示此視窗」即可改為直接下載，之後可在設定中改回。
 
@@ -263,7 +282,7 @@ The app's interface is currently available only in Traditional Chinese. UI label
 | **Browser download takeover** | Regular file downloads are handed to Divebird automatically; hold **Alt** while clicking a link to let the browser download it instead |
 | **Self-contained** | The prebuilt packages ship with Python, Qt, yt-dlp, FFmpeg and Deno, so there is nothing else to install |
 | **AI integration (MCP)** | MCP-capable AI tools can ask Divebird to download and check progress; permissions are set in Divebird, and AI-initiated downloads need your approval by default |
-| **And more** | Download queue, limits on simultaneous downloads and total speed, categories and search, drag-and-drop URLs, system tray, completion notifications, start at login, dark mode |
+| **And more** | Download queue, limits on simultaneous downloads and total speed, categories and search, drag-and-drop URLs, system tray, completion notifications, start at login, dark mode, update check |
 
 ### Screenshots
 
@@ -288,6 +307,24 @@ The app's interface is currently available only in Traditional Chinese. UI label
   <tr>
     <td align="center">Confirm the file name, quality and save location before downloading</td>
     <td align="center">Extension popup: detected media and settings</td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/images/settings-ai-dark.png">
+        <img src="docs/images/settings-ai-light.png" alt="Settings → AI integration">
+      </picture>
+    </td>
+    <td width="50%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/images/about-dark.png">
+        <img src="docs/images/about-light.png" alt="About Divebird">
+      </picture>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">Settings → AI integration: enable MCP, copy the connection settings and choose what the AI may do</td>
+    <td align="center">About: version, author and license; "檢查更新" (Check for updates) looks for a newer release on GitHub</td>
   </tr>
 </table>
 
@@ -353,6 +390,7 @@ The extension needs the Divebird desktop app to be running. Click the Divebird i
 - **Context menu**: right-click a link or a video/audio element and choose "用 Divebird 下載此連結" (download this link) or "用 Divebird 下載此影片／音訊" (download this video/audio); right-click the page and choose "用 Divebird 解析此頁面的影片" (find videos on this page).
 - **Browser download takeover**: regular file downloads are handed to Divebird; hold **Alt** while clicking a link to let the browser download it instead. You can turn this off in the popup.
 - **Desktop app**: click "新增網址" (add URL) or drag a link into the window; right-click an item to open the file, download it again or copy its URL.
+- **Check for updates**: click "關於" (About) on the toolbar, then "檢查更新" (check for updates). If a newer version exists, Divebird asks whether to open its download page on GitHub; it only goes online when you click the button.
 
 When Divebird receives a download, it first shows the "下載檔案資訊" (download details) dialog with the file name, size, quality and save location. Tick "不再顯示此視窗" (don't show this window again) to start downloads immediately; you can turn the dialog back on in the settings.
 
