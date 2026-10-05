@@ -45,6 +45,18 @@ function Get-VenvProcesses {
     }
 }
 
+# AI 應用程式以 stdio 啟動的 MCP 橋接：.venv\Scripts\python.exe -m divebird.mcp，
+# 應用程式開著就一直執行。它只用到 Python 本身與 src 裡的程式碼，uv sync 更新套件時不會動到，
+# 所以一般更新不必等它結束；只有整個重建 .venv 時才需要。
+function Test-McpBridge($Process) {
+    try {
+        $cmd = (Get-CimInstance Win32_Process -Filter "ProcessId=$($Process.Id)" -ErrorAction Stop).CommandLine
+        return [bool]($cmd -match '\s-m\s+divebird\.mcp(\s|$)')
+    } catch {
+        return $false
+    }
+}
+
 # .venv 記錄的是絕對路徑：專案資料夾被搬移或改名後，它找不到 Python，只能重建
 function Test-VenvBroken {
     try {
@@ -63,21 +75,33 @@ function Test-VenvBroken {
 try {
     $old = $null
     if (Test-Path -LiteralPath $Venv) {
+        $rebuild = $Recreate -or (Test-VenvBroken)
         $users = @(Get-VenvProcesses)
+        $bridges = @($users | Where-Object { Test-McpBridge $_ })
+        if (-not $rebuild) {
+            $users = @($users | Where-Object { $bridges -notcontains $_ })
+        }
         if ($users.Count -gt 0) {
+            $others = @($users | Where-Object { $bridges -notcontains $_ })
             if ($users | Where-Object { $_.ProcessName -eq "divebird-gui" }) {
                 Write-Host "Divebird 正在執行（可能縮小在系統匣）。"
                 Write-Host "請先結束 Divebird（系統匣圖示按右鍵 →「結束」），再重新執行。"
             } else {
-                $names = ($users | ForEach-Object { "$($_.ProcessName).exe（PID $($_.Id)）" }) -join "、"
-                Write-Host "下列程式正在使用 .venv：$names"
-                Write-Host "可能是測試、終端機或編輯器，請先關閉它們再試。"
+                if ($others.Count -gt 0) {
+                    $names = ($others | ForEach-Object { "$($_.ProcessName).exe（PID $($_.Id)）" }) -join "、"
+                    Write-Host "下列程式正在使用 .venv：$names"
+                    Write-Host "可能是測試、終端機或編輯器，請先關閉它們再試。"
+                }
+                if ($others.Count -lt $users.Count) {
+                    Write-Host "AI 應用程式啟動的 Divebird MCP 橋接（divebird.mcp）正在使用 .venv。"
+                    Write-Host "重建執行環境前，請先完全結束那個 AI 應用程式，再重新執行。"
+                }
             }
             exit 4
         }
         # 動手之前先讓「環境已建好」失效：中途失敗或被關掉時，下次啟動會重跑 setup
         Remove-Item -LiteralPath $Stamp -Force -ErrorAction SilentlyContinue
-        if ($Recreate -or (Test-VenvBroken)) {
+        if ($rebuild) {
             # 先整個移開再重建（失敗時放回去），不在原地刪：刪到一半會留下壞掉卻看似完整的 .venv
             Write-Host "==> 移開舊的執行環境（.venv）..."
             $old = "$Venv.old-" + [guid]::NewGuid().ToString("N").Substring(0, 8)
