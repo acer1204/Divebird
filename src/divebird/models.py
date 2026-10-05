@@ -49,6 +49,8 @@ class Task:
     headers: dict = field(default_factory=dict)
     cookies: list = field(default_factory=list)
     media_format: str = ""          # yt-dlp format 選擇字串，空白 = 使用設定值
+    source: str = ""                # 任務來源：空白 = 使用者或擴充功能；"mcp:<工具名稱>" = AI 透過 MCP 發起
+    restrict_private: bool = False  # 不可連到內網或本機位址（AI 發起、未開放內網時）
     resumable: bool = False
     active_connections: int = 0
     created_at: float = field(default_factory=time.time)

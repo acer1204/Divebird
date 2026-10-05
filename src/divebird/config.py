@@ -119,6 +119,14 @@ class Settings:
     merge_format: str = "mp4"         # 影音合併輸出格式
     ffmpeg_path: str = ""             # 自訂 ffmpeg 路徑（空白 = 使用內附）
     max_retries: int = 8              # 每段連線失敗重試次數
+    # AI 整合（MCP）：讓支援 MCP 的 AI 工具透過 http://127.0.0.1:<port>/mcp 使用 Divebird。
+    # 存取權杖另存於資料夾中的 mcp-token；以下權限只有在啟用 MCP 時才能在設定中修改
+    mcp_enabled: bool = False
+    mcp_confirm: str = "always"       # always = AI 發起的下載每次在 Divebird 確認；never = 直接下載並通知
+    mcp_allow_subdir: bool = True     # AI 可指定下載資料夾底下的子資料夾
+    mcp_allow_cookies: bool = False   # AI 可傳入 Cookie 與 Authorization 等登入資訊
+    mcp_allow_private: bool = False   # AI 可下載內網與本機位址
+    mcp_allow_delete: bool = False    # AI 可刪除已下載的檔案
 
     _lock = threading.Lock()
 

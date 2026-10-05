@@ -25,6 +25,7 @@ import requests
 from requests.adapters import HTTPAdapter
 
 from ..models import Task
+from ..netpolicy import block_private_redirects
 from ..utils import (
     cookies_to_jar,
     ensure_extension,
@@ -133,6 +134,9 @@ def make_session(task: Task, pool_size: int = 16) -> requests.Session:
             s.headers[k] = v
     if task.cookies:
         s.cookies = cookies_to_jar(task.cookies)
+    if task.restrict_private:
+        # AI 發起的下載：伺服器把我們轉址到內網或本機時中止（第一個網址在加入任務時已檢查）
+        s.hooks["response"].append(block_private_redirects)
     adapter = HTTPAdapter(pool_connections=4, pool_maxsize=pool_size, max_retries=0)
     s.mount("http://", adapter)
     s.mount("https://", adapter)
@@ -157,14 +161,14 @@ def _close_all(responses) -> None:
 _CONTENT_RANGE = re.compile(r"bytes\s+(\d+)-(\d+)/(\d+|\*)", re.I)
 
 
-def probe(session: requests.Session, url: str) -> ProbeResult:
-    """探測檔案資訊（大小、檔名、是否可分段）。"""
-    resp = session.get(url, headers={"Range": "bytes=0-"}, stream=True,
-                       timeout=(CONNECT_TIMEOUT, READ_TIMEOUT), allow_redirects=True)
+def probe(session: requests.Session, url: str, timeout: tuple[float, float] | None = None) -> ProbeResult:
+    """探測檔案資訊（大小、檔名、是否可分段、是否為串流播放清單）。"""
+    timeout = timeout or (CONNECT_TIMEOUT, READ_TIMEOUT)
+    resp = session.get(url, headers={"Range": "bytes=0-"}, stream=True, timeout=timeout, allow_redirects=True)
     try:
         if resp.status_code == 416:   # 空檔案或伺服器不接受 Range
             resp.close()
-            resp = session.get(url, stream=True, timeout=(CONNECT_TIMEOUT, READ_TIMEOUT))
+            resp = session.get(url, stream=True, timeout=timeout)
         resp.raise_for_status()
         h = resp.headers
         total, resumable = -1, False

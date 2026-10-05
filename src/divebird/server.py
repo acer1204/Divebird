@@ -5,6 +5,7 @@
 - 檢查 Host 標頭，防止 DNS rebinding。
 - 帶有 Origin 標頭的請求（即瀏覽器發出的）只接受擴充功能來源
   （chrome-extension:// 等），一般網頁無法偷偷呼叫本 API。
+- /mcp（AI 工具用的 MCP 端點）：拒絕所有帶 Origin 的請求，必須啟用並帶正確的存取權杖。
 """
 from __future__ import annotations
 
@@ -13,14 +14,19 @@ import socket
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 from urllib.parse import urlsplit
 
 from . import __version__
 from .config import APP_NAME
 
+if TYPE_CHECKING:
+    from .mcp.service import McpService
+
 ALLOWED_ORIGIN_SCHEMES = ("chrome-extension://", "moz-extension://", "extension://")
 MAX_BODY = 4 * 1024 * 1024
+MCP_PATH = "/mcp"
+MAX_MCP_BODY = 1024 * 1024
 
 
 class _ApiHTTPServer(ThreadingHTTPServer):
@@ -36,10 +42,12 @@ class _ApiHTTPServer(ThreadingHTTPServer):
 
 
 class ApiServer:
-    def __init__(self, port: int, on_download: Callable[[dict], None], on_show: Callable[[], None]):
+    def __init__(self, port: int, on_download: Callable[[dict], None], on_show: Callable[[], None],
+                 mcp: McpService | None = None):
         self.port = port
         self.on_download = on_download
         self.on_show = on_show
+        self.mcp = mcp
         self._httpd: ThreadingHTTPServer | None = None
 
     def start(self) -> bool:
@@ -109,6 +117,9 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):  # noqa: N802
+        if self.path.split("?")[0] == MCP_PATH:
+            self._mcp_method_not_allowed()
+            return
         if not self._guard():
             return
         if self.path.split("?")[0] == "/api/ping":
@@ -116,10 +127,19 @@ class _Handler(BaseHTTPRequestHandler):
         else:
             self._send(404, {"ok": False, "error": "not found"})
 
+    def do_DELETE(self):  # noqa: N802
+        if self.path.split("?")[0] == MCP_PATH:
+            self._mcp_method_not_allowed()
+        else:
+            self._send(405, {"ok": False, "error": "method not allowed"})
+
     def do_POST(self):  # noqa: N802
+        path = self.path.split("?")[0]
+        if path == MCP_PATH:
+            self._handle_mcp()
+            return
         if not self._guard():
             return
-        path = self.path.split("?")[0]
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
@@ -147,3 +167,55 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(200, {"ok": True})
         else:
             self._send(404, {"ok": False, "error": "not found"})
+
+    # ---------------------------------------------------------------- MCP（AI 工具）
+    def _mcp_error(self, code: int, message: str, extra_headers: dict | None = None) -> None:
+        body = json.dumps({"jsonrpc": "2.0", "error": {"code": -32600, "message": message}},
+                          ensure_ascii=False).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        for k, v in (extra_headers or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _mcp_precheck(self) -> bool:
+        if not self._host_ok():
+            self._mcp_error(403, "Forbidden host")
+            return False
+        if self.headers.get("Origin") is not None:     # 網頁發出的請求一律拒絕（AI 工具不會帶 Origin）
+            self._mcp_error(403, "Requests from web pages are not allowed")
+            return False
+        return True
+
+    def _mcp_method_not_allowed(self) -> None:
+        # 只支援 POST：GET（舊版的 SSE 串流）與 DELETE（結束 session）回 405，不需要權杖
+        if self._mcp_precheck():
+            self._mcp_error(405, "Method not allowed: only POST is supported", {"Allow": "POST"})
+
+    def _handle_mcp(self) -> None:
+        if not self._mcp_precheck():
+            return
+        mcp = self.api.mcp
+        if mcp is None or not mcp.enabled():
+            self._mcp_error(503, "Divebird 的 MCP 功能尚未啟用：請在 Divebird「設定 → AI 整合」啟用。")
+            return
+        if not mcp.authorized(self.headers.get("Authorization")):
+            self._mcp_error(401, "存取權杖不正確或缺少：請帶上 Authorization: Bearer <Divebird 的 MCP 權杖>。",
+                            {"WWW-Authenticate": 'Bearer realm="Divebird MCP"'})
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = -1
+        if length < 0 or length > MAX_MCP_BODY:
+            self._mcp_error(413 if length > 0 else 400, "Invalid or too large request body")
+            return
+        reply = mcp.handle(self.headers, self.rfile.read(length))
+        if reply.body is None:
+            self.send_response(reply.status)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+        else:
+            self._send(reply.status, reply.body)

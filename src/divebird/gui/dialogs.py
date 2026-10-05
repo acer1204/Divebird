@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import copy
+import json
 import os
 import threading
 
 import requests
-from PySide6.QtCore import QObject, Qt, Signal
-from PySide6.QtGui import QFont, QPixmap
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
+from PySide6.QtGui import QFont, QGuiApplication, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
-    QLabel, QLineEdit, QPlainTextEdit, QPushButton, QSizePolicy, QSpinBox, QVBoxLayout,
+    QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QSizePolicy, QSpinBox, QTabWidget,
+    QVBoxLayout, QWidget,
 )
 
 from .. import __version__, autostart
@@ -17,6 +19,7 @@ from ..config import Settings
 from ..engine.http_engine import make_session, probe
 from ..engine.media_engine import AUDIO_BEST, AUDIO_MP3, extract_info, format_choices
 from ..engine.tools import deno_path, ffmpeg_path
+from ..mcp import token as mcp_token
 from ..models import Kind, Task
 from ..utils import human_size, human_time, sanitize_filename
 from . import icons
@@ -37,12 +40,15 @@ class NewDownloadDialog(QDialog):
 
     submitted = Signal(object, bool)      # (Task, 立即開始)
 
-    def __init__(self, task: Task, settings: Settings, parent=None):
+    def __init__(self, task: Task, settings: Settings, parent=None, *, origin: str = "", start: bool = True):
+        """origin：發起下載的 AI 工具名稱（透過 MCP），空白表示由使用者或瀏覽器擴充功能發起。"""
         super().__init__(parent)
         self.task = task
         self.settings = settings
         self._closed = False
-        self.setWindowTitle("新增下載")
+        self.was_submitted = False
+        self.origin = origin
+        self.setWindowTitle("新增下載（AI 發起）" if origin else "新增下載")
         self.setWindowIcon(icons.app_icon())
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -76,6 +82,14 @@ class NewDownloadDialog(QDialog):
         title_box.addWidget(self.url_label)
         head.addLayout(title_box, 1)
         root.addLayout(head)
+
+        if origin:
+            notice = QLabel(f"這個下載由 AI 工具「{origin}」透過 MCP 發起。請確認網址與檔名無誤後再開始；"
+                            "若不是你要求的下載，請按「取消」。")
+            notice.setTextFormat(Qt.TextFormat.PlainText)
+            notice.setWordWrap(True)
+            notice.setStyleSheet("background: rgba(37, 99, 235, 0.12); border-radius: 6px; padding: 8px 10px;")
+            root.addWidget(notice)
 
         body = QHBoxLayout()
         form = QFormLayout()
@@ -117,12 +131,15 @@ class NewDownloadDialog(QDialog):
 
         self.skip_box = QCheckBox("不再顯示此視窗，直接開始下載（可在設定中更改）")
         root.addWidget(self.skip_box)
+        # AI 發起的下載是否要確認，由「設定 → AI 整合」另外決定，不在這裡關閉
+        self.skip_box.setVisible(not origin)
 
         buttons = QDialogButtonBox()
         self.start_btn = buttons.addButton("開始下載", QDialogButtonBox.ButtonRole.AcceptRole)
         self.later_btn = buttons.addButton("稍後下載", QDialogButtonBox.ButtonRole.ActionRole)
         cancel = buttons.addButton("取消", QDialogButtonBox.ButtonRole.RejectRole)
-        self.start_btn.setDefault(True)
+        self.start_btn.setDefault(start)
+        self.later_btn.setDefault(not start)
         self.start_btn.setIcon(icons.icon("downloading", "#ffffff"))
         self.start_btn.setObjectName("primary")
         self.start_btn.clicked.connect(lambda: self._submit(True))
@@ -159,9 +176,10 @@ class NewDownloadDialog(QDialog):
         t.save_dir = self.dir_edit.text().strip() or self.settings.download_dir
         if t.kind == Kind.MEDIA and self.quality.currentData():
             t.media_format = self.quality.currentData()
-        if self.skip_box.isChecked():
+        if not self.origin and self.skip_box.isChecked():
             self.settings.show_dialog = False
             self.settings.save()
+        self.was_submitted = True
         self.submitted.emit(t, start)
         self.accept()
 
@@ -316,9 +334,14 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.settings = settings
         self.setWindowTitle("設定")
-        self.setMinimumWidth(560)
+        self.setMinimumWidth(620)
         lay = QVBoxLayout(self)
+        tabs = QTabWidget()
+        lay.addWidget(tabs)
 
+        # ---------------------------------------------------------------- 一般
+        general = QWidget()
+        gv = QVBoxLayout(general)
         g1 = QGroupBox("下載")
         f1 = QFormLayout(g1)
         row = QHBoxLayout()
@@ -335,8 +358,26 @@ class SettingsDialog(QDialog):
         self.speed = self._spin(0, 10_000_000, settings.speed_limit_kbps, " KB/s")
         self.speed.setSpecialValueText("不限速")
         f1.addRow("全域限速", self.speed)
-        lay.addWidget(g1)
+        gv.addWidget(g1)
 
+        g4 = QGroupBox("介面")
+        v4 = QVBoxLayout(g4)
+        self.tray = QCheckBox("關閉視窗時縮小到系統匣，繼續在背景下載")
+        self.tray.setChecked(settings.minimize_to_tray)
+        self.notify = QCheckBox("下載完成時顯示通知")
+        self.notify.setChecked(settings.notify_on_complete)
+        self.autostart = QCheckBox("登入系統時自動啟動（縮小到系統匣）")
+        self.autostart.setChecked(autostart.is_enabled())
+        v4.addWidget(self.tray)
+        v4.addWidget(self.notify)
+        v4.addWidget(self.autostart)
+        gv.addWidget(g4)
+        gv.addStretch(1)
+        tabs.addTab(general, "一般")
+
+        # ---------------------------------------------------------------- 瀏覽器整合
+        browser = QWidget()
+        bv = QVBoxLayout(browser)
         g2 = QGroupBox("瀏覽器整合")
         f2 = QFormLayout(g2)
         self.port = self._spin(1024, 65535, settings.port)
@@ -348,8 +389,13 @@ class SettingsDialog(QDialog):
         self.show_dialog = QCheckBox("收到瀏覽器傳來的下載時，顯示確認視窗")
         self.show_dialog.setChecked(settings.show_dialog)
         f2.addRow("", self.show_dialog)
-        lay.addWidget(g2)
+        bv.addWidget(g2)
+        bv.addStretch(1)
+        tabs.addTab(browser, "瀏覽器整合")
 
+        # ---------------------------------------------------------------- 影音
+        media = QWidget()
+        mv = QVBoxLayout(media)
         g3 = QGroupBox("影音（yt-dlp）")
         f3 = QFormLayout(g3)
         self.quality = QComboBox()
@@ -373,20 +419,12 @@ class SettingsDialog(QDialog):
         row.addWidget(self.ffmpeg, 1)
         row.addWidget(b2)
         f3.addRow("ffmpeg 路徑", row)
-        lay.addWidget(g3)
+        mv.addWidget(g3)
+        mv.addStretch(1)
+        tabs.addTab(media, "影音")
 
-        g4 = QGroupBox("介面")
-        v4 = QVBoxLayout(g4)
-        self.tray = QCheckBox("關閉視窗時縮小到系統匣，繼續在背景下載")
-        self.tray.setChecked(settings.minimize_to_tray)
-        self.notify = QCheckBox("下載完成時顯示通知")
-        self.notify.setChecked(settings.notify_on_complete)
-        self.autostart = QCheckBox("登入系統時自動啟動（縮小到系統匣）")
-        self.autostart.setChecked(autostart.is_enabled())
-        v4.addWidget(self.tray)
-        v4.addWidget(self.notify)
-        v4.addWidget(self.autostart)
-        lay.addWidget(g4)
+        # ---------------------------------------------------------------- AI 整合（MCP）
+        tabs.addTab(self._build_ai_tab(), "AI 整合")
 
         about = QLabel(self._about_text())
         about.setStyleSheet("color: palette(placeholder-text);")
@@ -400,6 +438,126 @@ class SettingsDialog(QDialog):
         bb.rejected.connect(self.reject)
         lay.addWidget(bb)
 
+    # ---------------------------------------------------------------- AI 整合（MCP）
+    def _build_ai_tab(self) -> QWidget:
+        s = self.settings
+        page = QWidget()
+        v = QVBoxLayout(page)
+        intro = QLabel("讓支援 MCP（Model Context Protocol）的 AI 工具，例如 Codex、Cursor、VS Code，"
+                       "透過本機連線使用 Divebird 下載檔案與影片。只有知道存取權杖的程式才能連線。")
+        intro.setWordWrap(True)
+        v.addWidget(intro)
+        self.mcp_enabled = QCheckBox("啟用 MCP")
+        self.mcp_enabled.setChecked(s.mcp_enabled)
+        v.addWidget(self.mcp_enabled)
+
+        conn = QGroupBox("連線資訊")
+        fc = QFormLayout(conn)
+        self.mcp_url = QLineEdit()
+        self.mcp_url.setReadOnly(True)
+        copy_url = QPushButton("複製")
+        copy_url.clicked.connect(lambda: self._copy(self.mcp_url.text(), copy_url))
+        row = QHBoxLayout()
+        row.addWidget(self.mcp_url, 1)
+        row.addWidget(copy_url)
+        fc.addRow("網址", row)
+
+        self.mcp_token = QLineEdit()
+        self.mcp_token.setReadOnly(True)
+        self.mcp_token.setEchoMode(QLineEdit.EchoMode.Password)
+        show = QPushButton("顯示")
+        show.setCheckable(True)
+        show.toggled.connect(lambda on: (self.mcp_token.setEchoMode(
+            QLineEdit.EchoMode.Normal if on else QLineEdit.EchoMode.Password), show.setText("隱藏" if on else "顯示")))
+        copy_token = QPushButton("複製")
+        copy_token.clicked.connect(lambda: self._copy(self.mcp_token.text(), copy_token))
+        regen = QPushButton("重新產生")
+        regen.clicked.connect(self._regenerate_token)
+        row = QHBoxLayout()
+        row.addWidget(self.mcp_token, 1)
+        for w in (show, copy_token, regen):
+            row.addWidget(w)
+        fc.addRow("存取權杖", row)
+
+        row = QHBoxLayout()
+        for label, kind in (("JSON（mcpServers）", "json"), ("Codex（config.toml）", "codex"),
+                            ("VS Code（mcp.json）", "vscode")):
+            btn = QPushButton(label)
+            btn.clicked.connect(lambda _=False, k=kind, b=btn: self._copy(self._mcp_config(k), b))
+            row.addWidget(btn)
+        row.addStretch(1)
+        fc.addRow("複製設定", row)
+        hint = QLabel("AI 工具連線時要帶上 Authorization: Bearer <存取權杖>。權杖等同密碼，請勿分享。"
+                      "Divebird 需要保持執行（可縮小在系統匣），AI 工具才連得上。")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: palette(placeholder-text);")
+        fc.addRow("", hint)
+        v.addWidget(conn)
+
+        perm = QGroupBox("AI 權限")
+        fp = QFormLayout(perm)
+        self.mcp_confirm = QComboBox()
+        self.mcp_confirm.addItem("每次在 Divebird 跳出確認視窗（建議）", "always")
+        self.mcp_confirm.addItem("不確認，直接下載並顯示通知", "never")
+        self.mcp_confirm.setCurrentIndex(max(0, self.mcp_confirm.findData(s.mcp_confirm)))
+        fp.addRow("AI 發起的下載", self.mcp_confirm)
+        self.mcp_subdir = QCheckBox("允許指定下載資料夾底下的子資料夾")
+        self.mcp_subdir.setChecked(s.mcp_allow_subdir)
+        self.mcp_cookies = QCheckBox("允許傳入 Cookie 與登入資訊（Authorization）")
+        self.mcp_cookies.setChecked(s.mcp_allow_cookies)
+        self.mcp_private = QCheckBox("允許下載內網與本機位址")
+        self.mcp_private.setChecked(s.mcp_allow_private)
+        self.mcp_delete = QCheckBox("允許刪除已下載的檔案")
+        self.mcp_delete.setChecked(s.mcp_allow_delete)
+        for box in (self.mcp_subdir, self.mcp_cookies, self.mcp_private, self.mcp_delete):
+            fp.addRow("", box)
+        v.addWidget(perm)
+        v.addStretch(1)
+
+        self._mcp_groups = (conn, perm)
+        self.mcp_enabled.toggled.connect(self._mcp_toggled)
+        self.port.valueChanged.connect(lambda _v: self._update_mcp_url())
+        self._mcp_toggled(s.mcp_enabled)
+        return page
+
+    def _update_mcp_url(self) -> None:
+        self.mcp_url.setText(f"http://127.0.0.1:{self.port.value()}/mcp")
+
+    def _mcp_toggled(self, on: bool) -> None:
+        for group in self._mcp_groups:
+            group.setEnabled(on)      # 啟用 MCP 才能設定權限
+        self._update_mcp_url()
+        if on:
+            self.mcp_token.setText(mcp_token.ensure())
+        else:
+            self.mcp_token.setText(mcp_token.load())
+            self.mcp_token.setPlaceholderText("啟用後自動產生")
+
+    def _regenerate_token(self) -> None:
+        answer = QMessageBox.question(self, "重新產生存取權杖",
+                                      "重新產生後，舊的權杖立即失效，已設定好的 AI 工具都要改用新的權杖。確定嗎？")
+        if answer == QMessageBox.StandardButton.Yes:
+            self.mcp_token.setText(mcp_token.reset())
+
+    def _mcp_config(self, kind: str) -> str:
+        url, auth = self.mcp_url.text(), f"Bearer {self.mcp_token.text()}"
+        if kind == "codex":
+            return (f'[mcp_servers.divebird]\nurl = "{url}"\n'
+                    f'http_headers = {{ "Authorization" = "{auth}" }}\n')
+        server = {"type": "http", "url": url, "headers": {"Authorization": auth}}
+        return json.dumps({"servers" if kind == "vscode" else "mcpServers": {"divebird": server}},
+                          ensure_ascii=False, indent=2)
+
+    @staticmethod
+    def _copy(text: str, button: QPushButton) -> None:
+        if not text:
+            return
+        QGuiApplication.clipboard().setText(text)
+        original = button.text()
+        button.setText("已複製")
+        QTimer.singleShot(1200, lambda: button.setText(original))
+
+    # ---------------------------------------------------------------- 共用
     @staticmethod
     def _spin(lo, hi, val, suffix=""):
         s = QSpinBox()
@@ -442,6 +600,14 @@ class SettingsDialog(QDialog):
         s.ffmpeg_path = self.ffmpeg.text().strip()
         s.minimize_to_tray = self.tray.isChecked()
         s.notify_on_complete = self.notify.isChecked()
+        s.mcp_enabled = self.mcp_enabled.isChecked()
+        if s.mcp_enabled:
+            mcp_token.ensure()
+        s.mcp_confirm = self.mcp_confirm.currentData()
+        s.mcp_allow_subdir = self.mcp_subdir.isChecked()
+        s.mcp_allow_cookies = self.mcp_cookies.isChecked()
+        s.mcp_allow_private = self.mcp_private.isChecked()
+        s.mcp_allow_delete = self.mcp_delete.isChecked()
         s.save()
         if self.autostart.isChecked() != autostart.is_enabled():
             try:

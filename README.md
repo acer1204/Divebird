@@ -44,6 +44,7 @@ Divebird 是開源、跨平台（Windows／Linux）的下載管理員，支援�
 | **斷點續傳** | 暫停、斷線或關閉程式後，都能從中斷處繼續（伺服器需支援續傳） |
 | **攔截瀏覽器下載** | 一般檔案的下載會自動轉交 Divebird 多連線下載；按住 **Alt** 再點連結，則改由瀏覽器自行下載 |
 | **內建執行環境** | 免安裝版已內含 Python、Qt、yt-dlp、FFmpeg、Deno，不需要另外安裝任何軟體 |
+| **AI 整合（MCP）** | 支援 MCP 的 AI 工具可以請 Divebird 下載、查詢進度；權限可在設定中控制，AI 發起的下載預設要經你確認 |
 | **其他** | 下載佇列、同時下載數與全域限速、分類與搜尋、拖曳網址、系統匣、完成通知、登入時自動啟動、深色模式 |
 
 ### 截圖
@@ -147,6 +148,28 @@ cd Divebird
 - **可攜模式**（免安裝版）：在 `Divebird.exe`（Linux 為 `Divebird`）所在的資料夾中，建立一個名為 `portable`、沒有副檔名的空檔案（`portable.txt` 無效），設定與下載清單就會改存放在程式旁的 `data/` 資料夾。
 - 桌面程式與擴充功能透過本機的 `127.0.0.1:17890` 連線。若在 Divebird 設定中變更了「本機 API 埠號」，請在擴充功能彈出視窗的「Divebird 連接埠」欄位填入相同的數字。
 
+### AI 整合（MCP）
+
+Divebird 內建 [MCP](https://modelcontextprotocol.io/)（Model Context Protocol）伺服器。支援 MCP 的 AI 工具（例如 Codex、Cursor、VS Code）可以請 Divebird 下載檔案、串流與影片，也能查詢進度、暫停或移除下載。
+
+1. 在 Divebird 開啟「設定 → AI 整合」，勾選「啟用 MCP」後按「儲存」。
+2. 在同一頁按「複製設定」，貼到 AI 工具的設定檔：
+
+   | 格式 | 適用 | 設定檔 |
+   | --- | --- | --- |
+   | JSON（mcpServers） | Cursor 等多數 AI 工具 | 例如 `~/.cursor/mcp.json` |
+   | Codex（config.toml） | Codex | `~/.codex/config.toml` |
+   | VS Code（mcp.json） | VS Code | 使用者設定或 `.vscode/mcp.json` |
+
+   連線網址是 `http://127.0.0.1:17890/mcp`，以 `Authorization: Bearer <存取權杖>` 驗證。權杖顯示在同一頁，等同密碼，請勿分享。
+3. 只能用 stdio 啟動 MCP 伺服器的 AI 應用程式：指令設為免安裝版資料夾裡的 `divebird-mcp`（Windows 為 `divebird-mcp.exe`），不需要參數與權杖；從原始碼執行時，改用 `.venv` 裡的 Python 執行 `-m divebird.mcp`。Divebird 沒在執行時，會自動在背景啟動。
+4. 之後就能直接跟 AI 說：「用 Divebird 下載 https://…/master.m3u8，檔名叫第 3 集」。
+
+- **權限**（設定 → AI 整合，啟用 MCP 後才能修改）：AI 發起的下載預設每次都要在 Divebird 跳出的視窗確認，視窗會標示「由 AI 工具發起」；指定子資料夾預設允許；傳入 Cookie 與登入資訊、下載內網位址、刪除檔案預設都不允許。
+- **Skill**：[`skills/divebird/SKILL.md`](skills/divebird/SKILL.md) 是給 AI 的使用提示，把這個資料夾的路徑告訴你的 AI 工具即可。
+- 需要登入的網站，AI 拿不到你瀏覽器裡的 Cookie，請改用擴充功能的下載按鈕。
+- 支援 MCP 的 2025-03-26 ～ 2025-11-25 與 2026-07-28 兩代協定。Divebird 必須在執行中（可縮小在系統匣），建議開啟登入時自動啟動。
+
 ### 自行打包
 
 | 系統 | 指令 | 產出 |
@@ -239,6 +262,7 @@ The app's interface is currently available only in Traditional Chinese. UI label
 | **Resume** | Pick up where you left off after pausing, losing the connection, or closing the app (if the server supports resuming) |
 | **Browser download takeover** | Regular file downloads are handed to Divebird automatically; hold **Alt** while clicking a link to let the browser download it instead |
 | **Self-contained** | The prebuilt packages ship with Python, Qt, yt-dlp, FFmpeg and Deno, so there is nothing else to install |
+| **AI integration (MCP)** | MCP-capable AI tools can ask Divebird to download and check progress; permissions are set in Divebird, and AI-initiated downloads need your approval by default |
 | **And more** | Download queue, limits on simultaneous downloads and total speed, categories and search, drag-and-drop URLs, system tray, completion notifications, start at login, dark mode |
 
 ### Screenshots
@@ -341,6 +365,28 @@ When Divebird receives a download, it first shows the "下載檔案資訊" (down
 
 - **Portable mode** (prebuilt packages): put an empty file named `portable` (no extension; `portable.txt` will not work) next to `Divebird.exe` (or `Divebird` on Linux), and settings and the download list are stored in a `data/` folder beside the app.
 - The desktop app and the extension communicate locally over `127.0.0.1:17890`. If you change "本機 API 埠號" (local API port) in the app's settings, enter the same number in "Divebird 連接埠" (Divebird port) in the extension popup.
+
+### AI integration (MCP)
+
+Divebird has a built-in [MCP](https://modelcontextprotocol.io/) (Model Context Protocol) server. MCP-capable AI tools (for example Codex, Cursor or VS Code) can ask Divebird to download files, streams and videos, check progress, and pause or remove downloads.
+
+1. In Divebird, open Settings → "AI 整合" (AI integration), tick "啟用 MCP" (enable MCP) and save.
+2. On the same tab, use "複製設定" (copy configuration) and paste it into your AI tool's configuration:
+
+   | Format | For | Configuration file |
+   | --- | --- | --- |
+   | JSON (mcpServers) | Cursor and most AI tools | e.g. `~/.cursor/mcp.json` |
+   | Codex (config.toml) | Codex | `~/.codex/config.toml` |
+   | VS Code (mcp.json) | VS Code | user settings or `.vscode/mcp.json` |
+
+   The endpoint is `http://127.0.0.1:17890/mcp`, authenticated with `Authorization: Bearer <access token>`. The token is shown on the same tab; treat it like a password.
+3. AI applications that can only start MCP servers over stdio: use `divebird-mcp` (`divebird-mcp.exe` on Windows) from the prebuilt package folder as the command, with no arguments and no token. When running from source, run `-m divebird.mcp` with the Python in `.venv`. If Divebird is not running, it is started in the background.
+4. Then just ask the AI: "Download https://…/master.m3u8 with Divebird and name it Episode 3".
+
+- **Permissions** (Settings → AI integration, editable once MCP is enabled): by default every AI-initiated download must be approved in a Divebird window that says it came from an AI tool; sub-folders are allowed; passing cookies and login headers, private-network addresses and deleting files are not allowed.
+- **Skill**: [`skills/divebird/SKILL.md`](skills/divebird/SKILL.md) contains usage hints for AI agents; point your AI tool at that folder.
+- The AI cannot use your browser's cookies, so for sites that need a login, use the extension's download button instead.
+- Supports both MCP generations: 2025-03-26 to 2025-11-25, and 2026-07-28. Divebird must be running (it can stay in the system tray); turning on start at login is recommended.
 
 ### Build it yourself
 

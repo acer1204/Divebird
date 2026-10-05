@@ -46,4 +46,24 @@ exe = EXE(
     icon=str(ROOT / "assets" / "divebird.ico") if IS_WIN else None,
     upx=False,
 )
-coll = COLLECT(exe, a.binaries, a.datas, name="Divebird", upx=False)
+# ---- divebird-mcp：MCP 的 stdio 橋接（主控台程式），給只能以 stdio 啟動 MCP 伺服器的 AI 應用程式使用。
+#      只用到標準函式庫與 divebird 的設定、協定模組，不需要 Qt、yt-dlp 與網路套件
+b = Analysis(
+    [str(ROOT / "src" / "divebird" / "mcp" / "__main__.py")],
+    pathex=[str(ROOT / "src")],
+    excludes=["tkinter", "PySide6", "yt_dlp", "yt_dlp_ejs", "requests", "urllib3", "imageio_ffmpeg", "deno",
+              "pytest", "PyInstaller"],
+    noarchive=False,
+)
+pyz_mcp = PYZ(b.pure)
+exe_mcp = EXE(
+    pyz_mcp,
+    b.scripts,
+    [],
+    exclude_binaries=True,
+    name="divebird-mcp",
+    console=True,
+    icon=str(ROOT / "assets" / "divebird.ico") if IS_WIN else None,
+    upx=False,
+)
+coll = COLLECT(exe, a.binaries, a.datas, exe_mcp, b.binaries, b.datas, name="Divebird", upx=False)

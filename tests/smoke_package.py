@@ -5,7 +5,7 @@
 以乾淨的設定目錄、離屏模式啟動打包好的 Divebird，透過本機 API 送出：
 1. 一般檔案（多連線分段下載）
 2. HLS 串流（驗證內附的 ffmpeg 可合併成 mp4）
-並檢查下載結果。
+並檢查下載結果；另外驗證 MCP：HTTP 端點（/mcp）與打包好的 stdio 橋接（divebird-mcp）。
 """
 from __future__ import annotations
 
@@ -55,6 +55,28 @@ def is_mp4(p: Path, wait: float = 0) -> bool:
         time.sleep(0.5)
 
 
+def check_mcp_http(token_file: Path) -> bool:
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                       "params": {"name": "get_status", "arguments": {}}}).encode()
+    req = urllib.request.Request(f"http://127.0.0.1:{PORT}/mcp", data=body, method="POST", headers={
+        "Content-Type": "application/json", "Accept": "application/json, text/event-stream",
+        "MCP-Protocol-Version": "2025-11-25", "Authorization": f"Bearer {token_file.read_text().strip()}"})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        return json.loads(r.read())["result"]["structuredContent"]["app"] == "Divebird"
+
+
+def check_mcp_stdio(app: Path, env: dict) -> bool:
+    bridge = app.with_name("divebird-mcp.exe" if os.name == "nt" else "divebird-mcp")
+    lines = [{"jsonrpc": "2.0", "id": 1, "method": "initialize",
+              "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "smoke"}}},
+             {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "get_status", "arguments": {}}}]
+    out = subprocess.run([str(bridge)], input="".join(json.dumps(m) + "\n" for m in lines).encode(),
+                         capture_output=True, env=env, timeout=60).stdout.decode("utf-8")
+    replies = {r["id"]: r for r in map(json.loads, out.splitlines())}
+    return (replies[1]["result"]["serverInfo"]["name"] == "divebird"
+            and replies[2]["result"]["structuredContent"]["app"] == "Divebird")
+
+
 def main() -> int:
     # 結果含中文：在 cp1252 等非 UTF-8 主控台（例如 GitHub 的 Windows 主機）也要能輸出
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -71,6 +93,7 @@ def main() -> int:
     dl = work / "downloads"
     (cfg / "settings.json").write_text(json.dumps({
         "download_dir": str(dl), "port": PORT, "show_dialog": False, "minimize_to_tray": False,
+        "mcp_enabled": True, "mcp_confirm": "never",
     }), encoding="utf-8")
     env = dict(os.environ, APPDATA=str(cfg_root), XDG_CONFIG_HOME=str(cfg_root), QT_QPA_PLATFORM="offscreen")
     proc = subprocess.Popen([str(app)], env=env)
@@ -98,6 +121,8 @@ def main() -> int:
         hls = dl / "串流測試.mp4"
         # 必須是真正的 MP4（ffmpeg 轉封裝成功），而不只是串接起來的 MPEG-TS
         results["HLS 串流 + 內附 ffmpeg 轉封裝"] = wait_file(hls) and is_mp4(hls, wait=30)
+        results["MCP HTTP 端點"] = check_mcp_http(cfg / "mcp-token")
+        results["MCP stdio 橋接（divebird-mcp）"] = check_mcp_stdio(app, env)
     finally:
         proc.terminate()
         try:

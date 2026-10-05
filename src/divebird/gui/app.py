@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import socket
 import sys
 import threading
 
@@ -12,10 +11,13 @@ from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 from .. import autostart
 from ..config import APP_NAME, LEGACY_NAMES, Settings, legacy_ports
 from ..engine.manager import DownloadManager
-from ..engine.media_engine import _site_extractors, is_manifest_url, is_media_site
-from ..models import Kind, Task
+from ..engine.media_engine import _site_extractors
+from ..intake import task_from_payload
+from ..localport import listening
+from ..mcp import token as mcp_token
+from ..mcp.service import McpService
+from ..models import Task
 from ..server import ApiServer
-from ..utils import sanitize_filename
 from . import icons
 from .dialogs import NewDownloadDialog
 from .main_window import MainWindow
@@ -30,6 +32,8 @@ class Bridge(QObject):
     finished = Signal(object)
     download_requested = Signal(object, bool)   # (Task, 是否詢問)
     show_requested = Signal()
+    mcp_confirm_requested = Signal(object, bool, str)   # (Task, 立即開始, AI 工具名稱)
+    notify_requested = Signal(str, str)
 
     def task_added(self, t):
         self.added.emit(t)
@@ -42,27 +46,6 @@ class Bridge(QObject):
 
     def task_finished(self, t):
         self.finished.emit(t)
-
-
-def task_from_payload(p: dict, settings: Settings) -> Task:
-    """把擴充功能送來的 JSON 轉成下載任務（在背景執行緒呼叫，判斷網站類型可能需要一點時間）。"""
-    url = str(p.get("url") or "")
-    kind = p.get("kind")
-    if kind not in (Kind.HTTP, Kind.MEDIA):
-        kind = Kind.MEDIA if (is_manifest_url(url) or is_media_site(url)) else Kind.HTTP
-    headers = {str(k): str(v) for k, v in (p.get("headers") or {}).items() if isinstance(v, (str, int))}
-    cookies = [c for c in (p.get("cookies") or []) if isinstance(c, dict)][:500]
-    title = str(p.get("title") or "")[:300]
-    filename = sanitize_filename(str(p["filename"])) if p.get("filename") else ""
-    if not filename and kind == Kind.MEDIA and is_manifest_url(url) and title:
-        filename = sanitize_filename(title) + "." + settings.merge_format
-    return Task(
-        url=url, kind=kind, filename=filename, title=title,
-        page_url=str(p.get("page_url") or ""),
-        referer=str(p.get("referer") or p.get("page_url") or ""),
-        user_agent=str(p.get("user_agent") or ""),
-        headers=headers, cookies=cookies, save_dir=settings.download_dir,
-    )
 
 
 def is_dark() -> bool:
@@ -125,12 +108,18 @@ class Controller(QObject):
         self._dialogs: set[NewDownloadDialog] = set()
         self.tray: QSystemTrayIcon | None = None
 
+        # AI 整合（MCP）：工具在 API 執行緒執行，需要介面的動作（確認視窗、通知）透過訊號回到 GUI 執行緒
+        self.mcp = McpService(settings, backend=self)
+        if settings.mcp_enabled:
+            mcp_token.ensure()
         self.server: ApiServer | None = None
         self.api_ok = False
         self._start_server()
 
         self.bridge.download_requested.connect(self.handle_request)
         self.bridge.show_requested.connect(lambda: self.window.bring_to_front())
+        self.bridge.mcp_confirm_requested.connect(self._open_mcp_dialog)
+        self.bridge.notify_requested.connect(self.notify)
         self.bridge.finished.connect(self._on_finished)
 
         self.window = MainWindow(self)
@@ -141,7 +130,7 @@ class Controller(QObject):
     # ---------------------------------------------------------------- API
     def _start_server(self):
         self.server = ApiServer(self.settings.port, on_download=self._api_download,
-                                on_show=self.bridge.show_requested.emit)
+                                on_show=self.bridge.show_requested.emit, mcp=self.mcp)
         self.api_ok = self.server.start()
 
     def restart_server(self):
@@ -174,6 +163,30 @@ class Controller(QObject):
             self.manager.add(task)
             if not self.window.isVisible():
                 self.notify("已開始下載", task.filename or task.title or task.url)
+
+    # ---------------------------------------------------------------- AI 整合（MCP）的介面動作
+    def confirm(self, task: Task, start: bool, client: str) -> None:
+        """由 API 執行緒呼叫：在 Divebird 跳出確認視窗。"""
+        self.bridge.mcp_confirm_requested.emit(task, start, client)
+
+    def announce(self, title: str, message: str) -> None:
+        """由 API 執行緒呼叫：顯示系統匣通知。"""
+        self.bridge.notify_requested.emit(title, message)
+
+    def _open_mcp_dialog(self, task: Task, start: bool, client: str) -> None:
+        dlg = NewDownloadDialog(task, self.settings, origin=client, start=start)
+
+        def submitted(t: Task, start_now: bool) -> None:
+            self.manager.add(t, start_now)
+            self.mcp.tools.confirmation_done(t.id, True)
+
+        dlg.submitted.connect(submitted)
+        dlg.finished.connect(lambda _r, d=dlg: (self._dialogs.discard(d),
+                                                d.was_submitted or self.mcp.tools.confirmation_done(task.id, False)))
+        self._dialogs.add(dlg)
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
 
     # ---------------------------------------------------------------- 系統匣
     def tray_available(self) -> bool:
@@ -227,24 +240,7 @@ class Controller(QObject):
         self.app.quit()
 
 
-def _listening(port: int) -> bool:
-    """本機的這個埠是否有程式在監聽。
-
-    Windows 連到沒人監聽的本機埠，要重試約 2 秒才會失敗；以前啟動時兩次檢查就白等了 2.5 秒。
-    所以先試著綁定這個埠：綁得到就是沒人在用（瞬間完成）；綁不到才用短逾時連線確認。
-    """
-    if sys.platform == "win32":
-        with socket.socket() as s:
-            try:
-                s.bind(("127.0.0.1", port))
-                return False
-            except OSError:
-                pass
-    try:
-        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-            return True
-    except OSError:
-        return False
+_listening = listening     # 舊名稱（測試仍在使用）
 
 
 def _forward_to_running(port: int, urls: list[str]) -> bool:
