@@ -148,6 +148,8 @@ def main() -> int:
     endpoint = Endpoint(ProxyTools(), name="divebird", title="Divebird", version=__version__,
                         instructions=INSTRUCTIONS)
     out = sys.stdout.buffer
+    if hasattr(sys.stderr, "reconfigure"):    # 規格要求記錄也用 UTF-8（Windows 預設是系統代碼頁，例如 cp950）
+        sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
     write_lock = threading.Lock()
     client = {"name": ""}
 

@@ -42,15 +42,10 @@ RATE_LIMIT = 60                        # 每分鐘最多呼叫次數
 PROBE_CACHE_SECONDS = 300
 QUALITY_PRESETS = {
     "best": "bv*+ba/b",
-    "2160p": "bv*[height<=2160]+ba/b[height<=2160]/bv*+ba/b",
-    "1440p": "bv*[height<=1440]+ba/b[height<=1440]/bv*+ba/b",
-    "1080p": "bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b",
-    "720p": "bv*[height<=720]+ba/b[height<=720]/bv*+ba/b",
-    "480p": "bv*[height<=480]+ba/b[height<=480]/bv*+ba/b",
-    "360p": "bv*[height<=360]+ba/b[height<=360]/bv*+ba/b",
     "audio": AUDIO_BEST,
     "mp3": AUDIO_MP3,
 }
+_HEIGHT = re.compile(r"(\d{3,4})p(?:\d{2,3})?")      # 1080p、240p、720p60……
 _CREDENTIAL_HEADERS = {"cookie", "authorization", "proxy-authorization"}
 _DROPPED_HEADERS = {"host", "content-length", "range", "connection", "transfer-encoding", "accept-encoding"}
 
@@ -243,14 +238,22 @@ class DivebirdTools:
             raise ToolError(f"無法解析網址的主機名稱：{e}") from None
 
     def _quality(self, args: dict) -> str:
-        value = _string(args, "quality", max_len=300)
+        value = _string(args, "quality", max_len=300).strip()
         if not value:
             return ""
         if value.lower() in QUALITY_PRESETS:
             return QUALITY_PRESETS[value.lower()]
+        height = _HEIGHT.fullmatch(value.lower())
+        if height:          # 不超過這個高度的最佳畫質；影片沒有這麼低的畫質時改用最佳畫質
+            h = int(height.group(1))
+            return f"bv*[height<={h}]+ba/b[height<={h}]/bv*+ba/b"
         if not value.isprintable():
             raise ToolError("quality 含有不合法的字元。")
-        return value        # probe_url 回傳的 yt-dlp 格式字串
+        if value in (AUDIO_BEST, AUDIO_MP3) or any(c in value for c in "[+/"):
+            return value    # probe_url 回傳的 qualities[].quality（yt-dlp 格式字串）
+        # 其他字串交給 yt-dlp 會被當成格式代碼，要到開始下載才失敗：現在就告訴模型該怎麼填
+        raise ToolError(f"不認得的 quality：{value}。請填 best、畫面高度（例如 1080p、480p、240p、144p）、"
+                        "audio、mp3，或 probe_url 回傳的 qualities[].quality。")
 
     def _snapshot(self, task_id: str) -> dict:
         with self._lock:

@@ -63,9 +63,10 @@ TOOL_DEFINITIONS: list[dict] = [
             "url": {"type": "string", "description": "http(s) URL to download."},
             "filename": {"type": "string", "description": "Optional file name; the extension is chosen "
                                                           "automatically for videos."},
-            "quality": {"type": "string", "description": "Videos only: best, 2160p, 1440p, 1080p, 720p, 480p, "
-                                                         "360p, audio (M4A), mp3, or a `quality` value from "
-                                                         "probe_url. Default: the user's setting."},
+            "quality": {"type": "string", "description": "Videos only: best, a maximum height such as 1080p, "
+                                                         "720p, 480p, 240p or 144p, audio (M4A), mp3, or a "
+                                                         "`quality` value from probe_url. Default: the user's "
+                                                         "setting."},
             "subdir": {"type": "string", "description": "Optional sub-folder inside the user's download folder, "
                                                         "e.g. \"Lectures/Week 1\" (if the user allowed it)."},
             "referer": {"type": "string", "description": "Page URL to send as Referer (needed by many streams)."},
@@ -152,8 +153,9 @@ TOOL_DEFINITIONS: list[dict] = [
             "media_id": {"type": "string", "description": "media_id from list_browser_media."},
             "filename": {"type": "string", "description": "Optional file name; the extension is chosen "
                                                           "automatically for videos."},
-            "quality": {"type": "string", "description": "Videos only: best, 2160p, 1440p, 1080p, 720p, 480p, "
-                                                         "360p, audio (M4A) or mp3. Default: the user's setting."},
+            "quality": {"type": "string", "description": "Videos only: best, a maximum height such as 1080p, "
+                                                         "720p, 480p, 240p or 144p, audio (M4A) or mp3. "
+                                                         "Default: the user's setting."},
             "subdir": {"type": "string", "description": "Optional sub-folder inside the user's download folder "
                                                         "(if the user allowed it)."},
             "start": {"type": "boolean", "description": "Start now (default) or add paused."},

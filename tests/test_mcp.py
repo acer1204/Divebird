@@ -374,6 +374,25 @@ def test_probe_url(env, server):
     assert page["kind"] == "page"
 
 
+def test_quality_values(env, server):
+    """畫質：任何高度（144p、240p……）、預設值與 probe_url 的格式字串都接受；其他字串立即拒絕，而不是開始下載後才失敗。"""
+    _, backend, c = env
+    quality = backend.service.tools._quality
+    assert quality({"quality": "144p"}) == "bv*[height<=144]+ba/b[height<=144]/bv*+ba/b"
+    assert quality({"quality": "720P60"}) == quality({"quality": "720p"})
+    assert quality({"quality": "Best"}) == "bv*+ba/b"
+    assert quality({"quality": "audio"}) == "audio:best" and quality({"quality": "audio:mp3"}) == "audio:mp3"
+    probe_value = "bv*[height<=240]+ba/b[height<=240]/bv*+ba/b"
+    assert quality({"quality": probe_value}) == probe_value and quality({}) == ""
+    for bad in ("最低畫質", "lowest", "144p，約 625.74 KB"):
+        with pytest.raises(mcp_tools.ToolError):
+            quality({"quality": bad})
+    server.add("/v.mp4", 1000)
+    res = c.call("download", {"url": server.url("/v.mp4"), "quality": "lowest"})
+    assert res["isError"] is True and "144p" in res["content"][0]["text"]
+    assert not backend.manager.tasks
+
+
 def test_stdio_bridge(env, tmp_path):
     """stdio 橋接：握手與工具清單在本地回答；工具呼叫轉送到 Divebird 的 /mcp（埠號與權杖從設定資料夾讀取）。"""
     import subprocess
@@ -381,8 +400,9 @@ def test_stdio_bridge(env, tmp_path):
 
     settings, _, _ = env
     settings.save()       # 橋接程式從（暫存的）設定資料夾讀取埠號
+    child_env = {k: v for k, v in os.environ.items() if k not in ("PYTHONIOENCODING", "PYTHONUTF8")}
     proc = subprocess.Popen([sys.executable, "-m", "divebird.mcp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, env=dict(os.environ))
+                            stderr=subprocess.PIPE, env=child_env)
     meta = {"io.modelcontextprotocol/protocolVersion": MODERN, "io.modelcontextprotocol/clientCapabilities": {},
             "io.modelcontextprotocol/clientInfo": {"name": "stdio-test", "version": "1"}}
     messages = [
@@ -407,6 +427,8 @@ def test_stdio_bridge(env, tmp_path):
     assert status["isError"] is False and status["structuredContent"]["app"] == "Divebird"
     assert replies[4]["result"]["resultType"] == "complete"
     assert replies[5]["result"]["resultType"] == "complete" and replies[5]["result"]["isError"] is False
+    # 記錄寫到 stderr，而且是 UTF-8（AI 應用程式把它存成記錄檔；Windows 預設的代碼頁會變成亂碼）
+    assert "橋接已啟動" in err.decode("utf-8")
 
 
 def test_rate_limit(env, monkeypatch):
