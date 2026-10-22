@@ -340,6 +340,20 @@ class MainWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
 
+    def select_task(self, task_id: str) -> None:
+        """選取並捲到某筆下載；被分類或搜尋篩掉時，先切回「全部下載」。"""
+        row = self.model.row_of(task_id)
+        if row < 0:
+            return
+        index = self.proxy.mapFromSource(self.model.index(row, 0))
+        if not index.isValid():
+            self.search.clear()
+            self.cats.setCurrentRow(0)
+            index = self.proxy.mapFromSource(self.model.index(row, 0))
+        if index.isValid():
+            self.table.selectRow(index.row())
+            self.table.scrollTo(index)
+
     def dragEnterEvent(self, e):  # noqa: N802
         if e.mimeData().hasUrls() or e.mimeData().hasText():
             e.acceptProposedAction()

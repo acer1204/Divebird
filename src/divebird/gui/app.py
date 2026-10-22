@@ -107,6 +107,7 @@ class Controller(QObject):
         self.manager = DownloadManager(settings, listener=self.bridge)
         self._dialogs: set[NewDownloadDialog] = set()
         self.tray: QSystemTrayIcon | None = None
+        self._notified_task = ""      # 最近一則通知對應的下載（點通知時選取它）
 
         # AI 整合（MCP）：工具在 API 執行緒執行，需要介面的動作（確認視窗、通知）透過訊號回到 GUI 執行緒
         self.mcp = McpService(settings, backend=self)
@@ -167,7 +168,7 @@ class Controller(QObject):
         else:
             self.manager.add(task)
             if not self.window.isVisible():
-                self.notify("已開始下載", task.filename or task.title or task.url)
+                self.notify("已開始下載", task.filename or task.title or task.url, task.id)
 
     # ---------------------------------------------------------------- AI 整合（MCP）的介面動作
     def confirm(self, task: Task, start: bool, client: str) -> None:
@@ -216,6 +217,7 @@ class Controller(QObject):
         tray.activated.connect(lambda reason: reason in (QSystemTrayIcon.ActivationReason.Trigger,
                                                          QSystemTrayIcon.ActivationReason.DoubleClick)
                                and self.window.bring_to_front())
+        tray.messageClicked.connect(self._notification_clicked)
         tray.setToolTip(APP_NAME)
         tray.show()
         self._tray_menu = menu
@@ -226,13 +228,20 @@ class Controller(QObject):
             from ..utils import human_size
             self.tray.setToolTip(f"{APP_NAME} — 下載中 {active} 個，{human_size(speed)}/s" if active else APP_NAME)
 
-    def notify(self, title: str, msg: str):
+    def notify(self, title: str, msg: str, task_id: str = ""):
         if self.tray:
+            self._notified_task = task_id     # Qt 只告訴我們「有通知被點了」，以最近一則為準
             self.tray.showMessage(title, msg, icons.app_icon(), 4000)
+
+    def _notification_clicked(self) -> None:
+        """點通知：打開主視窗；通知是某筆下載的話，選取那一筆。"""
+        self.window.bring_to_front()
+        if self._notified_task:
+            self.window.select_task(self._notified_task)
 
     def _on_finished(self, t: Task):
         if self.settings.notify_on_complete:
-            self.notify("下載完成", t.filename)
+            self.notify("下載完成", t.filename, t.id)
 
     def quit(self):
         self.window._quitting = True

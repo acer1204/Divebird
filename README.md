@@ -147,12 +147,13 @@ cd Divebird
 ### 使用方式
 
 - **懸浮按鈕**：把滑鼠移到影片上，按右上角的「下載此影片」。
-  - 只偵測到一個影片檔或串流：直接交給 Divebird 下載。
-  - 偵測到多個來源：跳出選單讓你選（HLS／DASH／MP4，或以 yt-dlp 解析整個網頁）。
+  - 影片本身有檔案網址（例如影片牆、搜尋結果頁）：直接下載你指的那一部，並以影片卡片上的名稱存檔。
+  - 串流播放器只偵測到一個來源：直接交給 Divebird 下載。
+  - 偵測到多個來源：跳出選單讓你選。上方是這部影片的串流（HLS／DASH／MP4，或以 yt-dlp 解析整個網頁），網頁上其他影片的來源收在「此網頁的其他影音」。同一頁有多部串流影片時，依影片開始載入的時間推測；找不到時，先播放幾秒再按一次。
   - 沒偵測到影片檔或串流（例如 YouTube）：整個網頁交給 yt-dlp 解析，再於 Divebird 視窗中選擇畫質。
 - **右鍵選單**：在連結或影片／音訊上按右鍵，選擇「用 Divebird 下載此連結」或「用 Divebird 下載此影片／音訊」；在網頁空白處按右鍵，選擇「用 Divebird 解析此頁面的影片」。
 - **攔截瀏覽器下載**：一般檔案的下載會自動轉交 Divebird，右鍵「另存連結為…」也一樣，不會再跳出瀏覽器的存檔視窗；按住 **Alt** 再點連結，則由瀏覽器自行下載。可在彈出視窗中關閉此功能。
-- **桌面程式**：按「新增網址」或直接把連結拖曳到視窗；在清單上按右鍵可開啟檔案、重新下載、複製網址。
+- **桌面程式**：按「新增網址」或直接把連結拖曳到視窗；在清單上按右鍵可開啟檔案、重新下載、複製網址。點下載完成的通知會打開 Divebird，並選取那筆下載。
 - **檢查更新**：按工具列的「關於」，再按「檢查更新」。有新版本時會詢問是否開啟 GitHub 的下載頁面；只有按下按鈕時才會連線查詢。
 
 收到下載時，Divebird 會先顯示「下載檔案資訊」視窗（檔名、大小、畫質、儲存位置）；勾選「不再顯示此視窗」即可改為直接下載，之後可在設定中改回。
@@ -384,12 +385,13 @@ The extension needs the Divebird desktop app to be running. Click the Divebird i
 ### Usage
 
 - **Floating button**: hover over a video and click "下載此影片" (Download this video) in the top-right corner.
-  - If only one video file or stream is found, it is sent to Divebird right away.
-  - If several sources are found, a menu lets you choose (HLS / DASH / MP4, or let yt-dlp analyze the whole page).
+  - If the video has its own file address (for example a video wall or search results), the video you point at is downloaded right away and saved under the name shown on its card.
+  - If a streaming player has only one source, it is sent to Divebird right away.
+  - If several sources are found, a menu lets you choose. This video's streams (HLS / DASH / MP4, or let yt-dlp analyze the whole page) come first; sources of other videos on the page are folded under "此網頁的其他影音" (other media on this page). When a page has several streaming videos, Divebird matches them by the time each video started loading; if nothing matches, play the video for a few seconds and click again.
   - If no file or stream is detected (e.g. on YouTube), the whole page goes to yt-dlp and you choose the quality in the Divebird window.
 - **Context menu**: right-click a link or a video/audio element and choose "用 Divebird 下載此連結" (download this link) or "用 Divebird 下載此影片／音訊" (download this video/audio); right-click the page and choose "用 Divebird 解析此頁面的影片" (find videos on this page).
 - **Browser download takeover**: regular file downloads are handed to Divebird, including "Save link as…" from the context menu, without the browser's own save dialog; hold **Alt** while clicking a link to let the browser download it instead. You can turn this off in the popup.
-- **Desktop app**: click "新增網址" (add URL) or drag a link into the window; right-click an item to open the file, download it again or copy its URL.
+- **Desktop app**: click "新增網址" (add URL) or drag a link into the window; right-click an item to open the file, download it again or copy its URL. Clicking a "download finished" notification opens Divebird with that download selected.
 - **Check for updates**: click "關於" (About) on the toolbar, then "檢查更新" (check for updates). If a newer version exists, Divebird asks whether to open its download page on GitHub; it only goes online when you click the button.
 
 When Divebird receives a download, it first shows the "下載檔案資訊" (download details) dialog with the file name, size, quality and save location. Tick "不再顯示此視窗" (don't show this window again) to start downloads immediately; you can turn the dialog back on in the settings.

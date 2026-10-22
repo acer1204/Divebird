@@ -32,7 +32,23 @@ EXT = ROOT / "extension"
 VENV_PY = ROOT / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 API_PORT = 17891
 
+GRID_CLIPS = ("ocean-wave", "city-night", "forest-walk", "promo")
 PAGES = {
+    "/grid.html": """<!doctype html><meta charset=utf-8><title>Dance Videos, Download The BEST Free Stock Video Footage</title>
+<body style="font-family:sans-serif;background:#f1f5f9;margin:40px">
+<h2>影片牆（模擬 Pexels 搜尋結果：每張卡片都是自己的影片檔，另有一部廣告）</h2>
+<div style="display:grid;grid-template-columns:repeat(2,330px);gap:16px">
+  <article><a style="display:block" href="/video/ocean-wave-101/"><video id=g1 src="/media/ocean-wave.mp4"
+    muted loop preload=auto width=320 height=180></video></a></article>
+  <article><a style="display:block" href="/video/city-night-202/"><video id=g2 src="/media/city-night.mp4"
+    muted loop preload=auto width=320 height=180></video></a></article>
+  <article><a style="display:block" href="/video/forest-walk-303/"><video id=g3 src="/media/forest-walk.mp4"
+    muted loop preload=auto width=320 height=180></video></a></article>
+  <article><a style="display:block" href="https://ads.example.com/promo"><video id=ad src="/media/promo.mp4"
+    muted loop preload=auto width=320 height=180></video></a></article>
+</div>
+<script>for (const v of document.querySelectorAll('video')) v.play().catch(() => {});</script>
+</body>""",
     "/video.html": """<!doctype html><meta charset=utf-8><title>測試影片頁</title>
 <body style="font-family:sans-serif;background:#f1f5f9;margin:40px">
 <h2>直接 MP4 影片</h2>
@@ -137,6 +153,12 @@ def make_media(root: Path, ffmpeg: str):
     subprocess.run([ffmpeg, *common, "-f", "hls", "-hls_time", "2", "-hls_playlist_type", "vod",
                     "-master_pl_name", "master.m3u8", str(hls / "index.m3u8")], check=True)
     (media / "archive.zip").write_bytes(os.urandom(3 * 1024 * 1024))
+    # 影片牆用的短片：每部內容不同，且大於擴充功能記錄影音的門檻（300 KB）
+    for i, name in enumerate(GRID_CLIPS):
+        subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+                        "-f", "lavfi", "-i", f"testsrc2=duration=3:size=640x360:rate=30,hue=h={i * 90}",
+                        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-b:v", "3M", "-movflags", "+faststart",
+                        str(media / f"{name}.mp4")], check=True)
 
 
 def sha(p: Path) -> str:
@@ -316,6 +338,22 @@ def main():
         page2.wait_for_timeout(1000)
         target = dl_dir / "HLS 串流課程 第一講.mp4"
         results["HLS 串流嗅探 + 下載"] = wait_file(target, 60) and wait_mp4(target)
+
+        # ---------------- 3b. 影片牆：網頁上很多影片時，按哪一部就直接下載哪一部，用卡片名稱存檔
+        page3 = ctx.new_page()
+        page3.goto(site.url("/grid.html"))
+        page3.wait_for_timeout(2500)
+        sniffed = sw.evaluate("() => Math.max(0, ...[...tabMedia.values()].map(l => l.length))")
+        box = page3.locator("#g2").bounding_box()
+        page3.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        page3.wait_for_timeout(600)
+        page3.mouse.click(box["x"] + box["width"] - 60, box["y"] + 28)
+        page3.wait_for_timeout(1500)
+        page3.screenshot(path=str(OUT / "4-grid.png"))
+        target = dl_dir / "city night 202.mp4"
+        print("  影片牆偵測到的影音：", sniffed)
+        results["影片牆：只下載指著的那部"] = (sniffed >= 4 and wait_file(target)
+                                        and sha(target) == sha(work / "site/media/city-night.mp4"))
 
         # ---------------- 4. AI 透過 MCP 下載瀏覽器偵測到的影音（擴充功能補上 Cookie 與 Referer 送出）
         results["AI 透過 MCP 下載瀏覽器偵測到的影音"] = mcp_browser_media(cfg_dir, work)

@@ -144,6 +144,7 @@ chrome.webRequest.onHeadersReceived.addListener(
       size,
       headers: reqHeaders,
       time: Date.now(),
+      frameId: d.frameId, // 哪個框架載入的：懸浮按鈕只列出影片所在框架的串流
     });
   },
   { urls: ["http://*/*", "https://*/*"], types: ["media", "xmlhttprequest", "other", "object"] },
@@ -294,7 +295,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const tabId = msg.tabId ?? sender.tab?.id;
         const tab = tabId != null ? await chrome.tabs.get(tabId).catch(() => null) : null;
         const media = tabId != null ? await loadTab(tabId) : [];
-        return { media, tabUrl: tab?.url || "", tabTitle: tab?.title || "" };
+        return { media, tabUrl: tab?.url || "", tabTitle: tab?.title || "", frameId: sender.frameId };
       }
       case "download": {
         const tabId = msg.tabId ?? sender.tab?.id;

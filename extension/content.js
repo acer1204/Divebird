@@ -44,9 +44,15 @@
   .btn.busy { opacity: .75; cursor: progress; }
   .menu { position: absolute; right: 0; top: calc(100% + 8px); width: 380px; max-width: 80vw;
           background: rgba(17, 24, 39, .97); border: 1px solid rgba(255,255,255,.08); border-radius: 12px;
-          padding: 6px; box-shadow: 0 14px 40px rgba(0,0,0,.5); display: none; }
+          padding: 6px; box-shadow: 0 14px 40px rgba(0,0,0,.5); display: none;
+          max-height: 60vh; overflow-y: auto; }
   .menu.show { display: block; }
   .menu h4 { margin: 4px 8px 6px; font-size: 12px; font-weight: 600; color: #9ca3af; }
+  .note { margin: 0 8px 6px; font-size: 12px; color: #fbbf24; }
+  .more { margin-top: 4px; padding: 7px 8px; border-top: 1px solid rgba(255,255,255,.08); font-size: 12px;
+          color: #9ca3af; cursor: pointer; border-radius: 0 0 8px 8px; }
+  .more:hover { color: #e5e7eb; }
+  .others { display: none; } .others.show { display: block; }
   .item { display: flex; align-items: center; gap: 9px; padding: 8px; border-radius: 8px; cursor: pointer; }
   .item:hover { background: rgba(255,255,255,.08); }
   .tag { flex: none; min-width: 44px; text-align: center; font-size: 11px; font-weight: 700; color: #fff;
@@ -234,7 +240,12 @@
   function fileLabel(url) {
     try {
       const u = new URL(url);
-      const last = decodeURIComponent(u.pathname.split("/").filter(Boolean).pop() || u.hostname);
+      const parts = u.pathname.split("/").filter(Boolean).map((p) => decodeURIComponent(p));
+      let last = parts.pop() || u.hostname;
+      // master.m3u8、index.m3u8 這類名稱每個播放器都一樣，多顯示一層資料夾才分得出來
+      if (/^(master|index|playlist|manifest|chunklist|stream|video|main)[^/]*\.(m3u8|mpd)$/i.test(last) && parts.length) {
+        last = `${parts.pop()}/${last}`;
+      }
       return last.length > 60 ? last.slice(0, 28) + "…" + last.slice(-28) : last;
     } catch {
       return url;
@@ -252,62 +263,166 @@
     return `${n.toFixed(i ? 1 : 0)} ${u[i]}`;
   }
 
-  async function candidates(v) {
-    const list = [];
-    const seen = new Set();
-    const add = (item) => {
-      if (!seen.has(item.url)) {
-        seen.add(item.url);
-        list.push(item);
-      }
-    };
-    const srcs = [v.currentSrc, v.src, ...[...v.querySelectorAll("source")].map((s) => s.src)];
-    for (const s of srcs) if (s && /^https?:/i.test(s)) add({ url: s, type: "video", label: fileLabel(s) });
+  // ---------------------------------------------------------------- 這部影片的來源與名稱
+  // 每部影片開始載入的時間：串流播放器（video.src 是 blob:）看不出載入哪個播放清單，
+  // 同一框架有好幾部影片時，用「這個時間前後載入的串流」推測是哪一個
+  const loadStarted = new WeakMap();
+  const MATCH_WINDOW_MS = 15000;
+  document.addEventListener(
+    "loadstart",
+    (e) => {
+      if (e.target instanceof HTMLVideoElement) loadStarted.set(e.target, Date.now());
+    },
+    true
+  );
 
-    const res = (await safeSend({ type: "getMedia" })) || {};
-    const order = { video: 0, hls: 1, dash: 2, audio: 3 };
-    const sniffed = (res.media || []).slice().sort((a, b) => (order[a.type] ?? 9) - (order[b.type] ?? 9));
-    for (const m of sniffed) add({ ...m, label: fileLabel(m.url) });
-
-    const media = list.slice();
-    const pageUrl = location.href;
-    add({ url: pageUrl, type: "page", label: "以 yt-dlp 解析此網頁（影音網站建議用此項）" });
-    if (window.top !== window && res.tabUrl && res.tabUrl !== pageUrl) {
-      add({ url: res.tabUrl, type: "page", label: "解析上層網頁" });
+  function mediaKey(url) {
+    try {
+      const u = new URL(url);
+      return u.origin + u.pathname;
+    } catch {
+      return url;
     }
-    return { media, all: list };
+  }
+
+  function streamType(url) {
+    const path = mediaKey(url).toLowerCase();
+    if (path.endsWith(".m3u8")) return "hls";
+    if (path.endsWith(".mpd")) return "dash";
+    return "video";
+  }
+
+  // 影片元素自己的檔案網址（不是 blob:）：這就是畫面上這部影片，不必猜
+  function ownSources(v) {
+    const srcs = [v.currentSrc, v.src, ...[...v.querySelectorAll("source")].map((s) => s.src)];
+    return [...new Set(srcs.filter((s) => s && /^https?:/i.test(s)))];
+  }
+
+  function cleanName(s) {
+    return (s || "").replace(/[\\/:*?"<>|\u0000-\u001f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
+  }
+
+  // 這部影片自己的名稱：一頁有很多影片（搜尋結果、影片牆）時不能都用網頁標題
+  function videoName(v) {
+    const own = cleanName(v.getAttribute("title") || v.getAttribute("aria-label"));
+    if (own) return own;
+    const card = v.closest("a[href]");
+    if (!card) return "";
+    const vr = v.getBoundingClientRect();
+    const cr = card.getBoundingClientRect();
+    if (cr.width * cr.height > 4 * Math.max(vr.width * vr.height, 1)) return ""; // 不是影片自己的卡片
+    const img = card.querySelector("img[alt]");
+    const text = cleanName(card.textContent);
+    const named = cleanName(card.title || card.getAttribute("aria-label") || (img && img.alt) || (text.length <= 100 ? text : ""));
+    if (named) return named;
+    // 卡片沒有文字時，從連結網址整理（/video/a-woman-dancing-6868325/ → a woman dancing 6868325）
+    try {
+      const last = new URL(card.href).pathname.split("/").filter(Boolean).pop() || "";
+      const words = decodeURIComponent(last).replace(/\.[a-z0-9]{2,5}$/i, "").split(/[-_]+/).filter(Boolean);
+      return words.length >= 2 ? cleanName(words.join(" ")) : "";
+    } catch {
+      return "";
+    }
+  }
+
+  function fileExt(url) {
+    const m = /\.(mp4|m4v|webm|mkv|mov|ogv|ogg|mp3|m4a|flac|wav)$/i.exec(mediaKey(url));
+    return m ? `.${m[1].toLowerCase()}` : "";
+  }
+
+  async function candidates(v) {
+    const res = (await safeSend({ type: "getMedia" })) || {};
+    const order = { hls: 0, dash: 1, video: 2, audio: 3 };
+    const sniffed = (res.media || []).slice().sort((a, b) => (order[a.type] ?? 9) - (order[b.type] ?? 9));
+    const others = collectVideos().filter((x) => x !== v);
+    const othersOwn = new Set(others.flatMap(ownSources).map(mediaKey));
+    // 這部影片所在框架載入的串流；其他影片元素自己的檔案不算
+    const inFrame = sniffed.filter(
+      (m) => (m.frameId == null || m.frameId < 0 || m.frameId === res.frameId) && !othersOwn.has(mediaKey(m.url))
+    );
+    const loaded = collectVideos().filter((x) => x.currentSrc);
+    const players = loaded.length;
+    const started = loadStarted.get(v);
+    let mine = [];
+    if (players === 0 || (players === 1 && loaded[0] === v)) mine = inFrame; // 框架裡只有這部影片在播放
+    else if (loaded.includes(v) && started) {
+      mine = inFrame.filter((m) => Math.abs((m.time || 0) - started) <= MATCH_WINDOW_MS);
+    } // 這部影片還沒載入、是別部在播放：框架裡的串流都不是它的
+    const mineKeys = new Set(mine.map((m) => m.url));
+    const rest = sniffed.filter((m) => !mineKeys.has(m.url));
+    const pages = [{ url: location.href, type: "page", label: "以 yt-dlp 解析此網頁（影音網站建議用此項）" }];
+    if (window.top !== window && res.tabUrl && res.tabUrl !== location.href) {
+      pages.push({ url: res.tabUrl, type: "page", label: "解析上層網頁" });
+    }
+    return { mine, others: rest, pages, guessed: players > 1 };
   }
 
   const TAGS = { video: "MP4", hls: "HLS", dash: "DASH", audio: "音訊", page: "網頁" };
 
-  function renderMenu(items) {
-    menu.textContent = "";
+  function ago(t) {
+    if (!t) return "";
+    const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+    return s < 60 ? `${s} 秒前` : `${Math.round(s / 60)} 分鐘前`;
+  }
+
+  function menuRow(it) {
+    const row = document.createElement("div");
+    row.className = "item";
+    row.title = it.url;
+    const tag = document.createElement("span");
+    tag.className = `tag ${it.type}`;
+    let tagText = TAGS[it.type] || it.type;
+    if (it.type === "video" && it.mime && it.mime.includes("webm")) tagText = "WEBM";
+    tag.textContent = tagText;
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = it.type === "page" ? it.label : fileLabel(it.url);
+    const size = document.createElement("span");
+    size.className = "size";
+    // m3u8 / mpd 的大小只是播放清單本身，不顯示
+    const parts = it.type === "page" ? [] : [it.type === "hls" || it.type === "dash" ? "串流" : humanSize(it.size), ago(it.time)];
+    size.textContent = parts.filter(Boolean).join(" · ");
+    row.append(tag, name, size);
+    row.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeMenu();
+      submit(it);
+    });
+    return row;
+  }
+
+  function heading(text) {
     const h = document.createElement("h4");
-    h.textContent = "選擇要用 Divebird 下載的項目";
-    menu.appendChild(h);
-    for (const it of items) {
-      const row = document.createElement("div");
-      row.className = "item";
-      row.title = it.url;
-      const tag = document.createElement("span");
-      tag.className = `tag ${it.type}`;
-      let tagText = TAGS[it.type] || it.type;
-      if (it.type === "video" && it.mime && it.mime.includes("webm")) tagText = "WEBM";
-      tag.textContent = tagText;
-      const name = document.createElement("span");
-      name.className = "name";
-      name.textContent = it.label;
-      const size = document.createElement("span");
-      size.className = "size";
-      // m3u8 / mpd 的大小只是播放清單本身，不顯示
-      size.textContent = it.type === "hls" || it.type === "dash" ? "串流" : humanSize(it.size);
-      row.append(tag, name, size);
-      row.addEventListener("click", (e) => {
+    h.textContent = text;
+    return h;
+  }
+
+  function renderMenu({ mine, others, pages, guessed }) {
+    menu.textContent = "";
+    if (mine.length) {
+      menu.appendChild(heading(guessed ? "這部影片（依載入時間推測）" : "這部影片"));
+      for (const it of mine) menu.appendChild(menuRow(it));
+    } else {
+      menu.appendChild(heading("這部影片"));
+      const note = document.createElement("div");
+      note.className = "note";
+      note.textContent = "找不到這部影片的串流：先播放幾秒再按一次，或改用下面的方式。";
+      menu.appendChild(note);
+    }
+    for (const it of pages) menu.appendChild(menuRow(it));
+    if (others.length) {
+      const more = document.createElement("div");
+      more.className = "more";
+      more.textContent = `▸ 此網頁的其他影音（${others.length}）`;
+      const box = document.createElement("div");
+      box.className = "others";
+      for (const it of others) box.appendChild(menuRow(it));
+      more.addEventListener("click", (e) => {
         e.stopPropagation();
-        closeMenu();
-        submit(it);
+        const open = box.classList.toggle("show");
+        more.textContent = `${open ? "▾" : "▸"} 此網頁的其他影音（${others.length}）`;
       });
-      menu.appendChild(row);
+      menu.append(more, box);
     }
     menu.classList.add("show");
     menuOpen = true;
@@ -331,13 +446,16 @@
 
   async function submit(item) {
     btn.classList.add("busy");
+    const name = current ? videoName(current) : "";
     const payload = {
       url: item.url,
       type: item.type,
       headers: item.headers || {},
       referer: (item.headers && (item.headers.Referer || item.headers.referer)) || location.href,
       pageUrl: window.top === window ? location.href : undefined,
-      title: window.top === window ? document.title : undefined,
+      title: name || (window.top === window ? document.title : undefined),
+      // 影片檔用這部影片自己的名稱存檔（串流的檔名由 Divebird 依 title 決定）
+      filename: name && item.type !== "page" && fileExt(item.url) ? name + fileExt(item.url) : undefined,
       source: "floating-button",
     };
     const res = await safeSend({ type: "download", item: payload });
@@ -351,13 +469,17 @@
     e.stopPropagation();
     if (!current) return;
     if (menuOpen) return closeMenu();
+    // 影片有自己的檔案網址：就是畫面上這部，直接下載，不列出網頁上其他影片
+    const own = ownSources(current);
+    if (own.length) return submit({ url: own[0], type: streamType(own[0]) });
     btn.classList.add("busy");
-    const { media, all } = await candidates(current);
+    const found = await candidates(current);
     btn.classList.remove("busy");
-    // 沒偵測到檔案 / 串流（例如 YouTube）→ 直接整頁交給 yt-dlp；只有一個 → 直接下載；多個 → 讓使用者選
-    if (media.length === 0) submit(all[0]);
-    else if (media.length === 1 && all.length <= 2 && media[0].type !== "audio") submit(media[0]);
-    else renderMenu(all);
+    const { mine, others, pages } = found;
+    // 什麼都沒偵測到（例如 YouTube）→ 整頁交給 yt-dlp；這部影片只有一個來源 → 直接下載；其他 → 讓使用者選
+    if (!mine.length && !others.length) submit(pages[0]);
+    else if (mine.length === 1 && mine[0].type !== "audio") submit(mine[0]);
+    else renderMenu(found);
   });
 
   // 背景傳來的提示（例如右鍵選單下載失敗）
