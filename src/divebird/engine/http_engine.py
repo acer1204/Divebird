@@ -220,6 +220,8 @@ class HttpDownloader:
         self._fatal: Exception | None = None
         self._etag = ""
         self._active = 0
+        self._transferring = 0                # 伺服器已接受、正在傳輸資料的連線（被拒絕或等待重試的不算）
+        self._transferring_at_error = 0       # 有連線放棄時，同時在傳輸的連線數（多半就是伺服器允許的上限）
         self._conn_limit = self.connections   # 伺服器限制連線數時會自動下修
         self._file = None
         self.segments: list[Segment] = []
@@ -397,14 +399,20 @@ class HttpDownloader:
                     raise self._fatal
                 downloaded = self._downloaded()
                 with self._lock:
+                    transferring = self._transferring
                     if downloaded > last_progress and self._errors:
                         # 有連線放棄、但其餘連線仍有進度：多半是伺服器限制同時連線數（如 503/429），
-                        # 下修連線數上限並重新計算錯誤，避免把仍在進行的下載誤判為失敗
-                        self._conn_limit = max(1, min(self._conn_limit, active))
+                        # 把上限下修為放棄當時伺服器實際接受的連線數（還在被拒絕、等待重試的連線不算），
+                        # 並重新計算錯誤，避免把仍在進行的下載誤判為失敗
+                        self._conn_limit = max(1, min(self._conn_limit, self._transferring_at_error))
                         self._errors.clear()
+                        self._transferring_at_error = 0
+                    # 放棄時可能剛好有連線在換分段、或重試的回應還沒到：之後同時傳輸的連線較多就以實際為準
+                    self._conn_limit = max(self._conn_limit, transferring)
                     errors = list(self._errors)
                 last_progress = max(last_progress, downloaded)
-                if len(errors) >= max(3, self._conn_limit):
+                # 多出來的連線常會同時被拒絕：仍有連線在傳輸時先不判定失敗，等之後有進度再重新計算
+                if not transferring and len(errors) >= max(3, self._conn_limit):
                     raise errors[-1]
                 if active < self._conn_limit:
                     self._spawn_workers(session, url)
@@ -451,6 +459,7 @@ class HttpDownloader:
                         start, end = seg.pos, seg.end
                 if start is not None:
                     resp = None
+                    accepted = False
                     try:
                         resp = session.get(url, headers={"Range": f"bytes={start}-{end}"}, stream=True,
                                            timeout=(CONNECT_TIMEOUT, READ_TIMEOUT))
@@ -461,6 +470,9 @@ class HttpDownloader:
                         if resp.status_code != 206:
                             resp.raise_for_status()
                             raise DownloadError(f"伺服器未回應分段內容（HTTP {resp.status_code}）")
+                        with self._lock:
+                            self._transferring += 1
+                        accepted = True
                         for chunk in resp.iter_content(CHUNK):
                             if self.stopped:
                                 break
@@ -488,6 +500,8 @@ class HttpDownloader:
                         if resp is not None:
                             with self._lock:
                                 self._responses.discard(resp)
+                                if accepted:
+                                    self._transferring -= 1
                             resp.close()
                 # 自己的分段完成 → 接手其他分段
                 with self._lock:
@@ -497,6 +511,7 @@ class HttpDownloader:
         except Exception as e:  # noqa: BLE001
             with self._lock:
                 self._errors.append(e)
+                self._transferring_at_error = max(self._transferring_at_error, self._transferring)
                 if _is_permanent(e):
                     self._fatal = e     # 權限 / 不存在等永久性錯誤，不再重試
         finally:
