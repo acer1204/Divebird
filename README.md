@@ -216,6 +216,7 @@ powershell -ExecutionPolicy Bypass -File scripts\test.ps1   # Windows 單元／�
   ```
 
 - 打包版煙霧測試：`.venv/bin/python tests/smoke_package.py dist/Divebird/Divebird`（Windows：`.venv\Scripts\python.exe tests\smoke_package.py dist\Divebird\Divebird.exe`）
+- 更新 README 截圖（「關於」與設定頁上有版本號，發布前執行）：`.venv/bin/python scripts/readme_screenshots.py`（Windows：`.venv\Scripts\python.exe scripts\readme_screenshots.py`）
 
 ### 架構
 
@@ -454,6 +455,7 @@ powershell -ExecutionPolicy Bypass -File scripts\test.ps1   # unit / integration
   ```
 
 - Smoke test of a packaged build: `.venv/bin/python tests/smoke_package.py dist/Divebird/Divebird` (Windows: `.venv\Scripts\python.exe tests\smoke_package.py dist\Divebird\Divebird.exe`)
+- Refresh the README screenshots (the About window and settings show the version, so run this before a release): `.venv/bin/python scripts/readme_screenshots.py` (Windows: `.venv\Scripts\python.exe scripts\readme_screenshots.py`)
 
 ### Architecture
 
