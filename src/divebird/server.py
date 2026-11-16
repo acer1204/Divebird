@@ -42,7 +42,8 @@ class _ApiHTTPServer(ThreadingHTTPServer):
 
 
 class ApiServer:
-    def __init__(self, port: int, on_download: Callable[[dict], None], on_show: Callable[[], None],
+    # on_download 回傳說明文字時表示拒絕這個下載（例如伺服器只讓瀏覽器下載），其他回傳值都視為已接受
+    def __init__(self, port: int, on_download: Callable[[dict], str | None], on_show: Callable[[], None],
                  mcp: McpService | None = None):
         self.port = port
         self.on_download = on_download
@@ -166,7 +167,11 @@ class _Handler(BaseHTTPRequestHandler):
             if urlsplit(url).scheme not in ("http", "https"):
                 self._send(400, {"ok": False, "error": "只支援 http / https 網址"})
                 return
-            self.api.on_download(data)
+            refused = self.api.on_download(data)
+            if isinstance(refused, str) and refused:
+                # 伺服器不讓 Divebird 下載：擴充功能收到 fallback 後改由瀏覽器自己下載
+                self._send(409, {"ok": False, "error": refused, "fallback": True})
+                return
             self._send(200, {"ok": True})
         elif path == "/api/show":
             self.api.on_show()

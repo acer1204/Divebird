@@ -20,6 +20,7 @@ class FileServer:
         self.content_types: dict[str, str] = {}     # 個別檔案的 Content-Type（預設 application/octet-stream）
         self.max_conns: int | None = None    # 模擬限制同時連線數的伺服器：超過就回 503
         self.require_range = False           # 模擬只接受 Range 請求的 CDN（例如 Bilibili）：沒有 Range 就回 567
+        self.refuse: set[str] = set()        # 模擬只讓瀏覽器下載的網站：這些路徑一律回 403
         self.active = 0
         self.requests: list[tuple[str, str | None]] = []
         self.lock = threading.Lock()
@@ -39,6 +40,14 @@ class FileServer:
                     fs.active += 1
                     over = fs.max_conns is not None and fs.active > fs.max_conns
                 try:
+                    if name in fs.refuse:
+                        body = b"Are you a bot or using download tools?"
+                        self.send_response(403)
+                        self.send_header("Content-Type", "text/plain")
+                        self.send_header("Content-Length", str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
+                        return
                     if fs.require_range and not rng:
                         self.send_response(567)
                         self.send_header("Content-Length", "0")

@@ -7,6 +7,32 @@ from .models import Kind, Task
 from .utils import sanitize_filename
 
 
+REFUSED_STATUSES = (401, 403)
+
+
+def refused_by_server(task: Task, timeout: float = 2.5) -> str:
+    """先以 1 個位元組的請求確認伺服器肯讓 Divebird 下載。
+
+    有些網站只讓真正的瀏覽器下載（例如要求下載工具不可使用瀏覽器的 User-Agent），
+    Divebird 會被拒絕（401／403）。這時回傳說明，讓攔截下載的擴充功能改由瀏覽器自己下載；
+    連不上或其他狀況回傳空字串，照常交給 Divebird（下載時會回報真正的錯誤）。
+    """
+    from .engine.http_engine import make_session
+
+    session = make_session(task)
+    try:
+        r = session.get(task.url, headers={"Range": "bytes=0-0"}, stream=True, timeout=(timeout, timeout))
+        status = r.status_code
+        r.close()
+    except Exception:  # noqa: BLE001
+        return ""
+    finally:
+        session.close()
+    if status in REFUSED_STATUSES:
+        return f"伺服器拒絕 Divebird 下載（HTTP {status}），請改由瀏覽器下載"
+    return ""
+
+
 def task_from_payload(p: dict, settings: Settings) -> Task:
     """在背景執行緒呼叫：判斷網站類型可能需要一點時間（第一次要載入 yt-dlp 的網站清單）。"""
     url = str(p.get("url") or "")

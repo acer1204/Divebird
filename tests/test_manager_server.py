@@ -180,6 +180,39 @@ def test_redownload_refused_while_merging(tmp_path):
     mgr.shutdown()
 
 
+def test_intercepted_download_refused_by_server_goes_back_to_browser(server, tmp_path):
+    """有些網站只讓瀏覽器下載（Divebird 會收到 403）：攔截下來的下載先確認，被拒絕時回 409，
+    擴充功能就讓瀏覽器照常下載；伺服器肯讓 Divebird 下載時照常接受。"""
+    from divebird.intake import refused_by_server, task_from_payload
+
+    server.add("/ok.zip", 1000)
+    server.add("/browser-only.png", 1000)
+    server.refuse.add("/browser-only.png")
+    settings = Settings(download_dir=str(tmp_path))
+    task = lambda path: task_from_payload({"url": server.url(path), "kind": "http"}, settings)  # noqa: E731
+    assert refused_by_server(task("/ok.zip")) == ""
+    assert "403" in refused_by_server(task("/browser-only.png"))
+    assert refused_by_server(task_from_payload({"url": "http://127.0.0.1:1/x.zip"}, settings)) == ""   # 連不上：照常接受
+    assert ("/ok.zip", "bytes=0-0") in server.requests
+
+    def on_download(payload):
+        return refused_by_server(task_from_payload(payload, settings)) or None
+
+    port = _free_port()
+    api = ApiServer(port, on_download=on_download, on_show=lambda: None)
+    assert api.start()
+    ext = {"Origin": "chrome-extension://abcdefghijklmnop"}
+    try:
+        r = requests.post(f"http://127.0.0.1:{port}/api/download", headers=ext, timeout=10,
+                          json={"url": server.url("/browser-only.png"), "source": "intercept"})
+        assert r.status_code == 409 and r.json()["fallback"] is True and "403" in r.json()["error"]
+        r = requests.post(f"http://127.0.0.1:{port}/api/download", headers=ext, timeout=10,
+                          json={"url": server.url("/ok.zip"), "source": "intercept"})
+        assert r.status_code == 200 and r.json()["ok"] is True
+    finally:
+        api.stop()
+
+
 def test_second_server_cannot_share_port():
     """Windows 上不可讓第二個程式綁上已被佔用的埠（否則會出現「已啟用」的假象）。"""
     port = _free_port()

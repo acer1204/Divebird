@@ -273,7 +273,8 @@ async function sendToApp(item, tab) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(5000),
+      // 攔截的下載 Divebird 會先確認伺服器（最多約 5 秒）：等久一點，避免這邊逾時改由瀏覽器下載、Divebird 卻也收下
+      signal: AbortSignal.timeout(item.source === "intercept" ? 12000 : 5000),
     });
   } catch {
     throw new Error("無法連線到 Divebird，請確認桌面程式已啟動");
@@ -354,14 +355,9 @@ function notifyTab(tab, message) {
 // 跳出「另存新檔」視窗（右鍵「另存連結為…」或開啟「下載前詢問儲存位置」時）。要攔截的下載
 // 在這之前就取消，就不會再跳出瀏覽器自己的視窗；不攔截的下載呼叫 suggest() 讓瀏覽器照常處理。
 let bypassUntil = 0;           // 使用者按住 Alt 點擊時，下一個下載不攔截
-const bypassUrls = new Set();  // 交還給瀏覽器的下載，避免再次攔截
 
 async function shouldIntercept(item) {
   const url = item.finalUrl || item.url;
-  if (bypassUrls.has(url)) {
-    bypassUrls.delete(url);
-    return false;
-  }
   if (Date.now() < bypassUntil) {
     bypassUntil = 0;
     return false;
@@ -379,13 +375,8 @@ async function interceptDownload(item, suggest) {
     return;
   }
   const url = item.finalUrl || item.url;
-  try {
-    await chrome.downloads.cancel(item.id);
-    await chrome.downloads.erase({ id: item.id });
-  } catch {
-    suggest();
-    return;
-  }
+  // 先交給 Divebird，它接受了才取消瀏覽器的下載。Divebird 會先確認伺服器肯讓它下載：
+  // 有些網站只讓真正的瀏覽器下載（Divebird 會收到 403）。被拒絕或連不上時，瀏覽器照常下載
   try {
     const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
     await sendToApp(
@@ -394,8 +385,14 @@ async function interceptDownload(item, suggest) {
       tabs[0]
     );
   } catch {
-    bypassUrls.add(url);
-    chrome.downloads.download({ url });
+    suggest();
+    return;
+  }
+  try {
+    await chrome.downloads.cancel(item.id);
+    await chrome.downloads.erase({ id: item.id });
+  } catch {
+    suggest(); // 無法取消時不要讓瀏覽器的下載一直等著
   }
 }
 

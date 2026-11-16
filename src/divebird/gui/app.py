@@ -12,7 +12,7 @@ from .. import autostart
 from ..config import APP_NAME, LEGACY_NAMES, Settings, legacy_ports
 from ..engine.manager import DownloadManager
 from ..engine.media_engine import _site_extractors
-from ..intake import task_from_payload
+from ..intake import refused_by_server, task_from_payload
 from ..localport import listening
 from ..mcp import token as mcp_token
 from ..mcp.service import McpService
@@ -139,12 +139,23 @@ class Controller(QObject):
             self.server.stop()
         self._start_server()
 
-    def _api_download(self, payload: dict):
-        """由 API 執行緒呼叫：另開執行緒判斷網址類型，讓擴充功能立即收到回應。"""
+    def _api_download(self, payload: dict) -> str | None:
+        """由 API 執行緒呼叫：另開執行緒判斷網址類型，讓擴充功能立即收到回應。
+
+        從瀏覽器攔截下來的下載，先確認伺服器肯讓 Divebird 下載；被拒絕時回傳說明，
+        擴充功能就讓瀏覽器照常下載（瀏覽器的下載還沒取消）。
+        """
         if payload.get("mcp_request"):
             # 擴充功能補上登入資訊後送來的、AI 指定的下載（list_browser_media → download_browser_media）
             threading.Thread(target=self.mcp.tools.fulfill_browser_request, args=(payload,), daemon=True).start()
-            return
+            return None
+        if payload.get("source") == "intercept":
+            task = task_from_payload(payload, self.settings)
+            refused = refused_by_server(task)
+            if refused:
+                return refused
+            self.bridge.download_requested.emit(task, True)
+            return None
 
         def work():
             self.bridge.download_requested.emit(task_from_payload(payload, self.settings), True)

@@ -54,6 +54,7 @@ PAGES = {
 <h2>直接 MP4 影片</h2>
 <video id=v src="/media/sample.mp4" controls muted width=640 height=360 style="background:#000"></video>
 <p><a id=dl href="/media/archive.zip">下載 archive.zip（測試攔截）</a></p>
+<p><a id=dl2 href="/media/browser-only.bin" download>只讓瀏覽器下載的檔案（下載工具會收到 403）</a></p>
 </body>""",
     "/hls.html": """<!doctype html><meta charset=utf-8><title>HLS 串流課程 第一講</title>
 <body style="font-family:sans-serif;background:#f1f5f9;margin:40px">
@@ -103,6 +104,12 @@ class Site:
                     self.wfile.write(body)
                     return
                 f = site.root / path.lstrip("/")
+                if path == "/media/browser-only.bin" and not self.headers.get("Sec-Fetch-Mode"):
+                    # 模擬只讓真正的瀏覽器下載的網站：下載工具（沒有 Sec-Fetch-* 標頭）一律 403
+                    self.send_response(403)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
                 if not f.is_file():
                     self.send_response(404)
                     self.send_header("Content-Length", "0")
@@ -153,6 +160,7 @@ def make_media(root: Path, ffmpeg: str):
     subprocess.run([ffmpeg, *common, "-f", "hls", "-hls_time", "2", "-hls_playlist_type", "vod",
                     "-master_pl_name", "master.m3u8", str(hls / "index.m3u8")], check=True)
     (media / "archive.zip").write_bytes(os.urandom(3 * 1024 * 1024))
+    (media / "browser-only.bin").write_bytes(os.urandom(1024 * 1024))
     # 影片牆用的短片：每部內容不同，且大於擴充功能記錄影音的門檻（300 KB）
     for i, name in enumerate(GRID_CLIPS):
         subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
@@ -322,6 +330,17 @@ def main():
         print("  瀏覽器決定存檔位置：", decided or "無", "｜瀏覽器自己下載：", [f.name for f in by_browser] or "無")
         results["攔截瀏覽器下載（不跳出另存新檔）"] = (ok and sha(dl_dir / "archive.zip") == sha(work / "site/media/archive.zip")
                                        and not decided and not by_browser)
+
+        # ---------------- 2b. 只讓瀏覽器下載的網站：Divebird 確認被拒（403）後，由瀏覽器照常下載
+        page.click("#dl2")
+        by_browser = work / "browser-downloads" / "browser-only.bin"
+        ok = wait_file(by_browser, 20)
+        page.wait_for_timeout(800)
+        tasks = json.loads((cfg_dir / "tasks.json").read_text(encoding="utf-8")) if (cfg_dir / "tasks.json").exists() else []
+        taken = [t for t in tasks if "browser-only" in t["url"]]
+        print("  只讓瀏覽器下載：瀏覽器存檔", ok, "｜Divebird 任務", len(taken))
+        results["只讓瀏覽器下載的網站：交還給瀏覽器"] = (ok and sha(by_browser) == sha(work / "site/media/browser-only.bin")
+                                         and not taken)
 
         # ---------------- 3. HLS：嗅探串流 → 選單 → 選 HLS
         page2 = ctx.new_page()
